@@ -58,6 +58,7 @@ def calculate_standings(adjusted_results_with_races, season_year):
         return pd.DataFrame()
     
     standings = season_results.groupby(['surname', 'forename'], as_index=False)['adjusted_points'].sum()
+    standings['driver_label'] = standings.apply(lambda row: f"{row['forename'][0]}. {row['surname']}", axis=1)
     standings = standings.sort_values(by='adjusted_points', ascending=False).reset_index(drop=True)
     standings.index += 1
     standings.reset_index(inplace=True)
@@ -81,7 +82,8 @@ def create_cumulative_points_chart(adjusted_results_with_races, season_year, poi
         season_results['race_number'] = season_results.groupby('year')['raceId'].rank(method='dense').astype(int)
     
     # Calculate cumulative points
-    season_results['cumulative_points'] = season_results.groupby(['surname', 'forename'])['adjusted_points'].cumsum()
+    season_results['driver_label'] = season_results.apply(lambda row: f"{row['forename'][0]}. {row['surname']}", axis=1)
+    season_results['cumulative_points'] = season_results.groupby(['driver_label'])['adjusted_points'].cumsum()
     
     # Determine which drivers to include
     if selected_driver_ids:
@@ -103,9 +105,9 @@ def create_cumulative_points_chart(adjusted_results_with_races, season_year, poi
         season_results_filtered,
         x='race_number',
         y='cumulative_points',
-        color='surname',
+        color='driver_label',
         title=f'Cumulative Points for {title_suffix} in {season_year} Season ({points_system_name})',
-        labels={'race_number': 'Race Number', 'cumulative_points': 'Cumulative Points', 'surname': 'Driver'},
+        labels={'race_number': 'Race Number', 'cumulative_points': 'Cumulative Points', 'driver_label': 'Driver'},
         markers=True
     )
     
@@ -124,10 +126,10 @@ def create_points_distribution_chart(standings, season_year, points_system_name)
     
     fig = px.bar(
         standings.head(15),
-        x='surname',
+        x='driver_label',
         y='adjusted_points',
         title=f'Points Distribution for {season_year} Season ({points_system_name})',
-        labels={'surname': 'Driver', 'adjusted_points': 'Total Points'},
+        labels={'driver_label': 'Driver', 'adjusted_points': 'Total Points'},
         color='adjusted_points',
         color_continuous_scale='viridis'
     )
