@@ -1,0 +1,147 @@
+# F1 Points Calculator
+
+A full-stack web application that allows users to calculate Formula 1 driver standings using different points systems. Built with FastAPI, Plotly, and modern web technologies.
+
+## Features
+
+- **Season Selection**: Choose from any F1 season (1950-2024)
+- **Multiple Points Systems**: 
+  - Modern (2010-2024): 25, 18, 15, 12, 10, 8, 6, 4, 2, 1
+  - Classic (1991-2002): 10, 6, 4, 3, 2, 1
+  - Pre-1991: 9, 6, 4, 3, 2, 1
+  - Custom: Define your own points system
+- **Interactive Visualizations**: 
+  - Cumulative points chart showing how drivers' points evolved throughout the season
+  - Points distribution bar chart for the top 15 drivers
+- **Modern UI**: Responsive design with Bootstrap and custom styling
+- **Real-time Calculations**: Fast API responses with Plotly charts
+
+## Installation
+
+1. **Clone or download the project files**
+
+2. **Install Python dependencies**:
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+3. **Ensure you have the required CSV files**:
+   - `results.csv` - Race results data
+   - `races.csv` - Race information
+   - `drivers.csv` - Driver information
+   - `seasons.csv` - Available seasons
+
+## Usage
+
+1. **Start the application**:
+   ```bash
+   python main.py
+   ```
+
+2. **Open your web browser** and navigate to:
+   ```
+   http://localhost:8000
+   ```
+
+3. **Select a season** from the dropdown menu
+
+4. **Choose a points system**:
+   - Modern (default): Current F1 points system
+   - Classic: Points system used from 1991-2002
+   - Pre-1991: Points system used before 1991
+   - Custom: Enter your own points (e.g., "10, 8, 6, 4, 3, 2, 1")
+
+5. **Click "Calculate Standings"** to see the results
+
+## API Endpoints
+
+- `GET /` - Main application page
+- `GET /api/seasons` - Get all available seasons
+- `POST /api/calculate-standings` - Calculate standings for a season with specified points system
+- `GET /api/points-systems` - Get predefined points systems
+
+## Example API Usage
+
+```python
+import requests
+
+# Get available seasons
+seasons = requests.get("http://localhost:8000/api/seasons").json()
+
+# Calculate standings for 2023 with modern points
+response = requests.post("http://localhost:8000/api/calculate-standings", 
+                        json={"season_year": 2023})
+
+# Calculate standings with custom points
+response = requests.post("http://localhost:8000/api/calculate-standings", 
+                        json={
+                            "season_year": 2023,
+                            "points_system": [10, 8, 6, 4, 3, 2, 1]
+                        })
+```
+
+## Data Sources
+
+The application uses historical F1 data from CSV files containing:
+- Race results and positions
+- Driver information
+- Race details and seasons
+- Circuit information
+
+## Technical Stack
+
+- **Backend**: FastAPI (Python)
+- **Frontend**: HTML5, CSS3, JavaScript
+- **Styling**: Bootstrap 5, Custom CSS
+- **Visualizations**: Plotly.js
+- **Data Processing**: Pandas
+- **Icons**: Font Awesome
+
+## Customization
+
+### Adding New Points Systems
+
+To add new predefined points systems, modify the `get_points_systems()` function in `main.py`:
+
+```python
+@app.get("/api/points-systems")
+async def get_points_systems():
+    return {
+        "points_systems": {
+            "modern": {"name": "Modern (2010-2024)", "points": [25, 18, 15, 12, 10, 8, 6, 4, 2, 1]},
+            "classic": {"name": "Classic (1991-2002)", "points": [10, 6, 4, 3, 2, 1]},
+            "pre_1991": {"name": "Pre-1991", "points": [9, 6, 4, 3, 2, 1]},
+            "your_system": {"name": "Your System", "points": [15, 12, 10, 8, 6, 4, 2, 1]},
+            "custom": {"name": "Custom", "points": []}
+        }
+    }
+```
+
+### Modifying Visualizations
+
+The charts are created using Plotly. You can modify the chart functions in `main.py`:
+- `create_cumulative_points_chart()` - Cumulative points over the season
+- `create_points_distribution_chart()` - Final points distribution
+
+## Troubleshooting
+
+1. **Port already in use**: Change the port in `main.py`:
+   ```python
+   uvicorn.run(app, host="0.0.0.0", port=8001)
+   ```
+
+2. **Missing CSV files**: Ensure all required CSV files are in the project directory
+
+3. **Dependencies issues**: Try updating pip and reinstalling requirements:
+   ```bash
+   python -m pip install --upgrade pip
+   pip install -r requirements.txt
+   ```
+
+## License
+
+This project is open source and available under the MIT License.
+
+## Contributing
+
+Feel free to submit issues, feature requests, or pull requests to improve the application.
