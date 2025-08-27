@@ -178,27 +178,34 @@
         }
 
         .standings-table {
-            background: rgba(40, 40, 40, 0.9);
+            background: #222;
             border-radius: 15px;
             overflow: hidden;
             box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
-            border: 1px solid rgba(225, 6, 0, 0.1);
+            border: 1px solid #444;
+            font-size: 1.2rem;
+            font-family: 'Segoe UI', Arial, Helvetica, sans-serif;
+            color: #222;
         }
 
         .standings-table th {
             background: linear-gradient(45deg, var(--f1-red), #ff4444);
-            color: white;
+            color: #222;
+            background-color: #fff;
             border: none;
-            padding: 1rem;
-            font-weight: 600;
+            padding: 1.2rem;
+            font-weight: 700;
             text-transform: uppercase;
-            letter-spacing: 1px;
+            letter-spacing: 0.07em;
+            font-size: 1.3rem;
         }
 
         .standings-table td {
-            padding: 1rem;
-            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-            color: #ffffff;
+            padding: 1.1rem;
+            border-bottom: 1px solid #444;
+            color: #222;
+            background-color: #fff;
+            font-size: 1.1rem;
         }
 
         .standings-table tbody tr:hover {
@@ -528,6 +535,7 @@
                                     <div class="col-md-1">
                                         <button class="btn btn-outline-primary" onclick="loadHeadToHeadStats()" disabled id="loadH2HBtn">
                                             <i class="fas fa-chart-bar"></i>
+                                            <span id="h2hBtnText">Compare</span>
                                         </button>
                                     </div>
                                 </div>
@@ -716,23 +724,25 @@
             const d1 = document.getElementById('driverSelect1').value;
             const d2 = document.getElementById('driverSelect2').value;
             const season = document.getElementById('seasonSelect').value;
-            
+            const btnText = document.getElementById('h2hBtnText');
+            btnText.textContent = 'Loading...';
             if (!d1 || !d2) {
                 showAlert('Please select both drivers for head-to-head comparison', 'warning');
+                btnText.textContent = 'Compare';
                 return;
             }
-
             try {
                 const response = await fetch(`/api/head-to-head?driver1_id=${d1}&driver2_id=${d2}&season=${season}`);
                 if (!response.ok) {
                     throw new Error(`HTTP error! status: ${response.status}`);
                 }
-                
                 const data = await response.json();
                 displayHeadToHeadResults(data);
             } catch (error) {
                 console.error('Error loading head-to-head stats:', error);
                 showAlert('Error loading head-to-head statistics: ' + error.message, 'danger');
+            } finally {
+                btnText.textContent = 'Compare';
             }
         }
 
@@ -743,6 +753,13 @@
             const driver1Name = data.driver1_stats.driver_name;
             const driver2Name = data.driver2_stats.driver_name;
             
+            if (!data || !data.head_to_head_record) {
+                recordSummary.innerHTML = `<div class='alert alert-warning'>No head-to-head data available for these drivers in this season.</div>`;
+                document.getElementById('h2hStatsGrid').innerHTML = '';
+                document.getElementById('raceComparisonBody').innerHTML = '';
+                document.getElementById('h2hResults').style.display = 'block';
+                return;
+            }
             recordSummary.innerHTML = `
                 <h4><i class="fas fa-trophy"></i> Head-to-Head Record</h4>
                 <div class="h2h-score">
