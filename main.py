@@ -12,7 +12,6 @@ import json
 from typing import List, Optional
 import warnings
 from functools import lru_cache
-from functools import lru_cache
 
 warnings.filterwarnings("ignore")
 
@@ -29,9 +28,7 @@ class StandingsRequest(BaseModel):
     season_year: int
     points_system: Optional[List[int]] = None
     selected_driver_ids: Optional[List[int]] = None
-    selected_driver_ids: Optional[List[int]] = None
 
-@lru_cache(maxsize=1)
 @lru_cache(maxsize=1)
 def load_data():
     """Load all necessary CSV files"""
@@ -40,7 +37,8 @@ def load_data():
     drivers = pd.read_csv('drivers.csv')
     seasons = pd.read_csv('seasons.csv')
     constructors = pd.read_csv('constructors.csv')
-    return results, races, drivers, seasons, constructors
+    driver_standings = pd.read_csv('driver_standings.csv')
+    return results, races, drivers, seasons, constructors, driver_standings
 
 def adjust_points(results_df, points_system):
     """Adjust the points in the results DataFrame to the specified points system"""
@@ -180,7 +178,7 @@ async def read_root(request: Request):
 async def get_seasons():
     """Get all available seasons"""
     try:
-        _, _, _, seasons, _ = load_data()
+        _, _, _, seasons, _, _ = load_data()
         return {"seasons": seasons['year'].tolist()}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -194,7 +192,7 @@ async def calculate_standings_api(request: StandingsRequest):
         else:
             points_system = request.points_system
         
-        results, races, drivers, _, constructors = load_data()
+        results, races, drivers, _, constructors, _ = load_data()
         
         # Adjust points
         adjusted_results = adjust_points(results, points_system)
@@ -283,15 +281,158 @@ async def get_points_systems():
 @app.get("/api/drivers")
 async def get_drivers(season: Optional[int] = None):
     """Get drivers list, optionally for a specific season."""
-    results, races, drivers, _ = load_data()
-    if season is not None:
-        race_ids = set(races.loc[races['year'] == season, 'raceId'].tolist())
-        driver_ids = results.loc[results['raceId'].isin(race_ids), 'driverId'].unique().tolist()
-        df = drivers[drivers['driverId'].isin(driver_ids)].copy()
-    else:
-        df = drivers.copy()
-    df = df.sort_values(by=['surname', 'forename'])
-    return {"drivers": df[['driverId', 'forename', 'surname']].to_dict('records')}
+    try:
+        results, races, drivers, _, _, _ = load_data()
+        if season is not None:
+            # Get race IDs for the specific season
+            season_races = races[races['year'] == season]
+            if season_races.empty:
+                return {"drivers": []}
+            
+            race_ids = season_races['raceId'].tolist()
+            # Get drivers who participated in any race of this season
+            season_results = results[results['raceId'].isin(race_ids)]
+            driver_ids = season_results['driverId'].unique().tolist()
+            df = drivers[drivers['driverId'].isin(driver_ids)].copy()
+        else:
+            df = drivers.copy()
+        
+        df = df.sort_values(by=['surname', 'forename'])
+        return {"drivers": df[['driverId', 'forename', 'surname']].to_dict('records')}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/head-to-head")
+async def get_head_to_head_stats(driver1_id: int, driver2_id: int, season: int):
+    """Get detailed head-to-head statistics for two drivers in a specific season."""
+    try:
+        results, races, drivers, _, constructors, driver_standings = load_data()
+        
+        # Get season races
+        season_races = races[races['year'] == season]
+        if season_races.empty:
+            raise HTTPException(status_code=404, detail=f"No races found for season {season}")
+        
+        race_ids = season_races['raceId'].tolist()
+        
+        # Get driver info
+        driver1_info = drivers[drivers['driverId'] == driver1_id].iloc[0] if not drivers[drivers['driverId'] == driver1_id].empty else None
+        driver2_info = drivers[drivers['driverId'] == driver2_id].iloc[0] if not drivers[drivers['driverId'] == driver2_id].empty else None
+        
+        if not driver1_info or not driver2_info:
+            raise HTTPException(status_code=404, detail="One or both drivers not found")
+        
+        # Get results for both drivers in the season
+        season_results = results[results['raceId'].isin(race_ids)]
+        driver1_results = season_results[season_results['driverId'] == driver1_id].copy()
+        driver2_results = season_results[season_results['driverId'] == driver2_id].copy()
+        
+        # Merge with constructor info
+        driver1_results = pd.merge(driver1_results, constructors[['constructorId', 'name']], on='constructorId', how='left')
+        driver2_results = pd.merge(driver2_results, constructors[['constructorId', 'name']], on='constructorId', how='left')
+        
+        # Merge with race info
+        driver1_results = pd.merge(driver1_results, races[['raceId', 'name', 'round']], on='raceId', how='left')
+        driver2_results = pd.merge(driver2_results, races[['raceId', 'name', 'round']], on='raceId', how='left')
+        
+        # Calculate statistics
+        def calculate_driver_stats(driver_results, driver_info):
+            if driver_results.empty:
+                return {
+                    'driver_name': f"{driver_info['forename']} {driver_info['surname']}",
+                    'wins': 0,
+                    'poles': 0,
+                    'podiums': 0,
+                    'points_finishes': 0,
+                    'dnfs': 0,
+                    'total_points': 0,
+                    'best_finish': None,
+                    'avg_finish': None,
+                    'constructor': None,
+                    'races_entered': 0
+                }
+            
+            # Basic stats
+            wins = len(driver_results[driver_results['positionOrder'] == 1])
+            poles = len(driver_results[driver_results['grid'] == 1])
+            podiums = len(driver_results[driver_results['positionOrder'].isin([1, 2, 3])])
+            points_finishes = len(driver_results[driver_results['points'] > 0])
+            dnfs = len(driver_results[driver_results['positionText'].str.contains('R|D|W|E', na=False)])
+            total_points = driver_results['points'].sum()
+            races_entered = len(driver_results)
+            
+            # Best and average finish (excluding DNFs)
+            finished_races = driver_results[driver_results['positionOrder'].notna()]
+            best_finish = finished_races['positionOrder'].min() if not finished_races.empty else None
+            avg_finish = finished_races['positionOrder'].mean() if not finished_races.empty else None
+            
+            # Most common constructor
+            constructor = driver_results['name'].mode().iloc[0] if not driver_results['name'].mode().empty else None
+            
+            return {
+                'driver_name': f"{driver_info['forename']} {driver_info['surname']}",
+                'wins': int(wins),
+                'poles': int(poles),
+                'podiums': int(podiums),
+                'points_finishes': int(points_finishes),
+                'dnfs': int(dnfs),
+                'total_points': float(total_points),
+                'best_finish': int(best_finish) if best_finish else None,
+                'avg_finish': round(avg_finish, 1) if avg_finish else None,
+                'constructor': constructor,
+                'races_entered': int(races_entered)
+            }
+        
+        driver1_stats = calculate_driver_stats(driver1_results, driver1_info)
+        driver2_stats = calculate_driver_stats(driver2_results, driver2_info)
+        
+        # Head-to-head comparisons
+        h2h_comparisons = []
+        for _, race in season_races.iterrows():
+            race_id = race['raceId']
+            d1_race = driver1_results[driver1_results['raceId'] == race_id]
+            d2_race = driver2_results[driver2_results['raceId'] == race_id]
+            
+            if not d1_race.empty and not d2_race.empty:
+                d1_pos = d1_race.iloc[0]['positionOrder'] if pd.notna(d1_race.iloc[0]['positionOrder']) else None
+                d2_pos = d2_race.iloc[0]['positionOrder'] if pd.notna(d2_race.iloc[0]['positionOrder']) else None
+                
+                if d1_pos is not None and d2_pos is not None:
+                    winner = driver1_info['surname'] if d1_pos < d2_pos else driver2_info['surname']
+                    margin = abs(d1_pos - d2_pos)
+                else:
+                    winner = "Both DNF" if d1_pos is None and d2_pos is None else "One DNF"
+                    margin = None
+                
+                h2h_comparisons.append({
+                    'race_name': race['name'],
+                    'round': int(race['round']),
+                    'driver1_position': int(d1_pos) if d1_pos else None,
+                    'driver2_position': int(d2_pos) if d2_pos else None,
+                    'winner': winner,
+                    'margin': margin
+                })
+        
+        # Calculate head-to-head record
+        h2h_wins_d1 = len([c for c in h2h_comparisons if c['winner'] == driver1_info['surname']])
+        h2h_wins_d2 = len([c for c in h2h_comparisons if c['winner'] == driver2_info['surname']])
+        h2h_ties = len([c for c in h2h_comparisons if c['winner'] == "Both DNF"])
+        
+        return {
+            'season': season,
+            'driver1_stats': driver1_stats,
+            'driver2_stats': driver2_stats,
+            'head_to_head_record': {
+                'driver1_wins': h2h_wins_d1,
+                'driver2_wins': h2h_wins_d2,
+                'ties': h2h_ties,
+                'total_races': len(h2h_comparisons)
+            },
+            'race_by_race': h2h_comparisons
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
     import uvicorn

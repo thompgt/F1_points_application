@@ -3,112 +3,431 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>F1 Points Calculator</title>
+    <title>F1 Points Calculator - Racing Analytics</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
     <style>
+        :root {
+            --f1-red: #e10600;
+            --f1-dark: #1e1e1e;
+            --f1-gold: #ffd700;
+            --f1-silver: #c0c0c0;
+            --f1-bronze: #cd7f32;
+            --f1-blue: #0066cc;
+            --f1-green: #00ff00;
+        }
+
         body {
-            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+            background: linear-gradient(135deg, #0a0a0a 0%, #1a1a1a 50%, #0a0a0a 100%);
             min-height: 100vh;
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            color: #ffffff;
+            position: relative;
+            overflow-x: hidden;
         }
+
+        body::before {
+            content: '';
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: 
+                radial-gradient(circle at 20% 20%, rgba(225, 6, 0, 0.1) 0%, transparent 50%),
+                radial-gradient(circle at 80% 80%, rgba(0, 102, 204, 0.1) 0%, transparent 50%),
+                radial-gradient(circle at 40% 60%, rgba(255, 215, 0, 0.05) 0%, transparent 50%);
+            pointer-events: none;
+            z-index: -1;
+        }
+
         .main-container {
-            background: rgba(255, 255, 255, 0.95);
+            background: rgba(30, 30, 30, 0.95);
             border-radius: 20px;
-            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.5);
             backdrop-filter: blur(10px);
+            border: 1px solid rgba(225, 6, 0, 0.2);
+            position: relative;
+            overflow: hidden;
         }
+
+        .main-container::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 3px;
+            background: linear-gradient(90deg, var(--f1-red), var(--f1-gold), var(--f1-blue));
+        }
+
         .header {
-            background: linear-gradient(45deg, #e10600, #ff6b35);
+            background: linear-gradient(45deg, var(--f1-red), #ff4444);
             color: white;
             border-radius: 20px 20px 0 0;
             padding: 2rem;
+            position: relative;
+            overflow: hidden;
         }
+
+        .header::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><circle cx="20" cy="20" r="2" fill="rgba(255,255,255,0.1)"/><circle cx="80" cy="40" r="1.5" fill="rgba(255,255,255,0.1)"/><circle cx="40" cy="80" r="1" fill="rgba(255,255,255,0.1)"/></svg>');
+            pointer-events: none;
+        }
+
+        .header h1 {
+            font-weight: 700;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+            margin-bottom: 0.5rem;
+        }
+
+        .header .trophy-icon {
+            color: var(--f1-gold);
+            animation: rotate 3s ease-in-out infinite;
+        }
+
+        @keyframes rotate {
+            0%, 100% { transform: rotateY(0deg); }
+            50% { transform: rotateY(180deg); }
+        }
+
         .form-section {
-            background: #f8f9fa;
+            background: rgba(40, 40, 40, 0.8);
             border-radius: 15px;
             padding: 2rem;
             margin: 1rem 0;
+            border: 1px solid rgba(225, 6, 0, 0.1);
+            transition: all 0.3s ease;
         }
+
+        .form-section:hover {
+            border-color: rgba(225, 6, 0, 0.3);
+            box-shadow: 0 5px 15px rgba(225, 6, 0, 0.1);
+        }
+
+        .form-section h3 {
+            color: var(--f1-red);
+            font-weight: 600;
+            margin-bottom: 1.5rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .form-label {
+            color: #ffffff;
+            font-weight: 500;
+            margin-bottom: 0.5rem;
+        }
+
+        .form-select, .form-control {
+            background: rgba(60, 60, 60, 0.8);
+            border: 1px solid rgba(225, 6, 0, 0.2);
+            color: #ffffff;
+            border-radius: 10px;
+            transition: all 0.3s ease;
+        }
+
+        .form-select:focus, .form-control:focus {
+            background: rgba(80, 80, 80, 0.9);
+            border-color: var(--f1-red);
+            box-shadow: 0 0 0 0.2rem rgba(225, 6, 0, 0.25);
+            color: #ffffff;
+        }
+
+        .form-select option {
+            background: #2a2a2a;
+            color: #ffffff;
+        }
+
         .btn-primary {
-            background: linear-gradient(45deg, #e10600, #ff6b35);
+            background: linear-gradient(45deg, var(--f1-red), #ff4444);
             border: none;
             border-radius: 25px;
             padding: 12px 30px;
             font-weight: 600;
             transition: all 0.3s ease;
+            text-transform: uppercase;
+            letter-spacing: 1px;
         }
+
         .btn-primary:hover {
             transform: translateY(-2px);
-            box-shadow: 0 10px 20px rgba(225, 6, 0, 0.3);
+            box-shadow: 0 10px 20px rgba(225, 6, 0, 0.4);
+            background: linear-gradient(45deg, #ff4444, var(--f1-red));
         }
+
+        .btn-outline-primary {
+            border-color: var(--f1-red);
+            color: var(--f1-red);
+            border-radius: 25px;
+            transition: all 0.3s ease;
+        }
+
+        .btn-outline-primary:hover {
+            background: var(--f1-red);
+            border-color: var(--f1-red);
+            transform: translateY(-1px);
+        }
+
         .standings-table {
-            background: white;
+            background: rgba(40, 40, 40, 0.9);
             border-radius: 15px;
             overflow: hidden;
-            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+            border: 1px solid rgba(225, 6, 0, 0.1);
         }
+
         .standings-table th {
-            background: linear-gradient(45deg, #e10600, #ff6b35);
+            background: linear-gradient(45deg, var(--f1-red), #ff4444);
             color: white;
             border: none;
             padding: 1rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1px;
         }
+
         .standings-table td {
             padding: 1rem;
-            border-bottom: 1px solid #eee;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            color: #ffffff;
         }
-        .position-1 { background-color: #ffd700; }
-        .position-2 { background-color: #c0c0c0; }
-        .position-3 { background-color: #cd7f32; }
+
+        .standings-table tbody tr:hover {
+            background: rgba(225, 6, 0, 0.1);
+        }
+
+        .position-1 { 
+            background: linear-gradient(90deg, rgba(255, 215, 0, 0.2), transparent);
+            border-left: 4px solid var(--f1-gold);
+        }
+        .position-2 { 
+            background: linear-gradient(90deg, rgba(192, 192, 192, 0.2), transparent);
+            border-left: 4px solid var(--f1-silver);
+        }
+        .position-3 { 
+            background: linear-gradient(90deg, rgba(205, 127, 50, 0.2), transparent);
+            border-left: 4px solid var(--f1-bronze);
+        }
+
         .chart-container {
-            background: white;
+            background: rgba(40, 40, 40, 0.9);
             border-radius: 15px;
             padding: 1.5rem;
             margin: 1rem 0;
-            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+            border: 1px solid rgba(225, 6, 0, 0.1);
         }
+
+        .chart-container h4 {
+            color: var(--f1-red);
+            font-weight: 600;
+            margin-bottom: 1rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
         .loading {
             display: none;
             text-align: center;
             padding: 2rem;
         }
+
         .spinner-border {
-            color: #e10600;
+            color: var(--f1-red);
         }
+
         .points-system-selector {
-            background: white;
+            background: rgba(40, 40, 40, 0.8);
             border-radius: 15px;
             padding: 1.5rem;
             margin: 1rem 0;
-            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
+            border: 1px solid rgba(225, 6, 0, 0.1);
         }
+
         .custom-points-input {
             display: none;
         }
+
         .alert {
             border-radius: 15px;
             border: none;
+            background: rgba(40, 40, 40, 0.9);
+            color: #ffffff;
+        }
+
+        .alert-danger {
+            border-left: 4px solid #dc3545;
+        }
+
+        .alert-warning {
+            border-left: 4px solid #ffc107;
+        }
+
+        .alert-success {
+            border-left: 4px solid #28a745;
+        }
+
+        .head-to-head-section {
+            background: rgba(40, 40, 40, 0.9);
+            border-radius: 15px;
+            padding: 2rem;
+            margin: 1rem 0;
+            border: 1px solid rgba(225, 6, 0, 0.2);
+        }
+
+        .h2h-stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 1.5rem;
+            margin-top: 1.5rem;
+        }
+
+        .h2h-stat-card {
+            background: rgba(60, 60, 60, 0.8);
+            border-radius: 10px;
+            padding: 1.5rem;
+            border: 1px solid rgba(225, 6, 0, 0.1);
+            transition: all 0.3s ease;
+        }
+
+        .h2h-stat-card:hover {
+            border-color: rgba(225, 6, 0, 0.3);
+            transform: translateY(-2px);
+        }
+
+        .h2h-stat-card h5 {
+            color: var(--f1-red);
+            font-weight: 600;
+            margin-bottom: 1rem;
+            text-align: center;
+        }
+
+        .stat-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.5rem 0;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .stat-row:last-child {
+            border-bottom: none;
+        }
+
+        .stat-label {
+            color: #cccccc;
+            font-weight: 500;
+        }
+
+        .stat-value {
+            color: #ffffff;
+            font-weight: 600;
+        }
+
+        .h2h-record {
+            background: linear-gradient(45deg, var(--f1-red), #ff4444);
+            color: white;
+            border-radius: 10px;
+            padding: 1.5rem;
+            text-align: center;
+            margin: 1rem 0;
+        }
+
+        .h2h-record h4 {
+            margin-bottom: 1rem;
+            font-weight: 600;
+        }
+
+        .h2h-score {
+            font-size: 2rem;
+            font-weight: 700;
+            margin: 1rem 0;
+        }
+
+        .race-comparison-table {
+            background: rgba(40, 40, 40, 0.9);
+            border-radius: 10px;
+            overflow: hidden;
+            margin-top: 1rem;
+        }
+
+        .race-comparison-table th {
+            background: rgba(60, 60, 60, 0.9);
+            color: #ffffff;
+            padding: 0.75rem;
+            font-weight: 600;
+        }
+
+        .race-comparison-table td {
+            padding: 0.75rem;
+            color: #ffffff;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .winner-cell {
+            background: rgba(255, 215, 0, 0.2);
+            font-weight: 600;
+        }
+
+        .form-check-input:checked {
+            background-color: var(--f1-red);
+            border-color: var(--f1-red);
+        }
+
+        .form-check-input:focus {
+            border-color: var(--f1-red);
+            box-shadow: 0 0 0 0.25rem rgba(225, 6, 0, 0.25);
+        }
+
+        .form-text {
+            color: #cccccc;
+        }
+
+        .form-control-plaintext {
+            color: #ffffff;
+            background: rgba(60, 60, 60, 0.5);
+            border-radius: 5px;
+            padding: 0.5rem;
+        }
+
+        @media (max-width: 768px) {
+            .h2h-stats-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .header h1 {
+                font-size: 1.5rem;
+            }
         }
     </style>
 </head>
 <body>
     <div class="container-fluid py-4">
         <div class="row justify-content-center">
-            <div class="col-lg-10">
+            <div class="col-lg-12">
                 <div class="main-container">
                     <!-- Header -->
                     <div class="header text-center">
-                        <h1><i class="fas fa-trophy"></i> F1 Points Calculator</h1>
-                        <p class="mb-0">Calculate Formula 1 standings with different points systems</p>
+                        <h1><i class="fas fa-trophy trophy-icon"></i> F1 Points Calculator</h1>
+                        <p class="mb-0">Advanced Racing Analytics & Head-to-Head Comparisons</p>
                     </div>
 
                     <!-- Main Content -->
                     <div class="p-4">
                         <!-- Season Selection -->
                         <div class="form-section">
-                            <h3><i class="fas fa-calendar"></i> Season Selection</h3>
+                            <h3><i class="fas fa-calendar-alt"></i> Season Selection</h3>
                             <div class="row">
                                 <div class="col-md-6">
                                     <label for="seasonSelect" class="form-label">Select Season:</label>
@@ -150,7 +469,7 @@
                         <!-- Calculate Button -->
                         <div class="text-center mb-4">
                             <button class="btn btn-primary btn-lg" onclick="calculateStandings()">
-                                <i class="fas fa-calculator"></i> Calculate Standings
+                                <i class="fas fa-flag-checkered"></i> Calculate Standings
                             </button>
                         </div>
 
@@ -184,8 +503,8 @@
                             </div>
 
                             <!-- Head-to-Head Selection -->
-                            <div class="points-system-selector mt-4">
-                                <h3><i class="fas fa-user-friends"></i> Head-to-Head Comparison (Optional)</h3>
+                            <div class="head-to-head-section">
+                                <h3><i class="fas fa-user-friends"></i> Head-to-Head Comparison</h3>
                                 <div class="row align-items-end">
                                     <div class="col-md-3">
                                         <label class="form-label">Enable Head-to-Head:</label>
@@ -207,15 +526,47 @@
                                         </select>
                                     </div>
                                     <div class="col-md-1">
-                                        <button class="btn btn-outline-primary" onclick="updateCumulativeChart()" disabled id="updateChartBtn">
-                                            <i class="fas fa-sync-alt"></i>
+                                        <button class="btn btn-outline-primary" onclick="loadHeadToHeadStats()" disabled id="loadH2HBtn">
+                                            <i class="fas fa-chart-bar"></i>
                                         </button>
                                     </div>
                                 </div>
-                                <div class="form-text mt-2">Select two drivers to compare their cumulative points progression.</div>
+                                <div class="form-text mt-2">Select two drivers to compare their season statistics and head-to-head record.</div>
                             </div>
 
-                            <!-- Charts (stacked vertically) -->
+                            <!-- Head-to-Head Results -->
+                            <div id="h2hResults" style="display: none;">
+                                <!-- Head-to-Head Record Summary -->
+                                <div class="h2h-record" id="h2hRecordSummary">
+                                </div>
+
+                                <!-- Head-to-Head Statistics -->
+                                <div class="h2h-stats-grid" id="h2hStatsGrid">
+                                </div>
+
+                                <!-- Race-by-Race Comparison -->
+                                <div class="chart-container">
+                                    <h4><i class="fas fa-table"></i> Race-by-Race Comparison</h4>
+                                    <div class="table-responsive">
+                                        <table class="table race-comparison-table">
+                                            <thead>
+                                                <tr>
+                                                    <th>Round</th>
+                                                    <th>Race</th>
+                                                    <th id="driver1Name">Driver 1</th>
+                                                    <th id="driver2Name">Driver 2</th>
+                                                    <th>Winner</th>
+                                                    <th>Margin</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody id="raceComparisonBody">
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Charts -->
                             <div class="mt-4">
                                 <div class="chart-container">
                                     <h4><i class="fas fa-chart-line"></i> Cumulative Points</h4>
@@ -270,20 +621,21 @@
                 const enabled = this.checked;
                 const driverSelect1 = document.getElementById('driverSelect1');
                 const driverSelect2 = document.getElementById('driverSelect2');
-                const updateChartBtn = document.getElementById('updateChartBtn');
+                const loadH2HBtn = document.getElementById('loadH2HBtn');
                 
                 driverSelect1.disabled = !enabled;
                 driverSelect2.disabled = !enabled;
-                updateChartBtn.disabled = !enabled;
+                loadH2HBtn.disabled = !enabled;
                 
                 // Clear selections when disabled
                 if (!enabled) {
                     driverSelect1.value = '';
                     driverSelect2.value = '';
+                    document.getElementById('h2hResults').style.display = 'none';
                 }
             });
 
-            // Add change listeners to driver selects to enable update button when both are selected
+            // Add change listeners to driver selects
             document.getElementById('driverSelect1').addEventListener('change', function() {
                 checkDriverSelections();
             });
@@ -297,12 +649,12 @@
             const enableH2H = document.getElementById('enableH2H');
             const driverSelect1 = document.getElementById('driverSelect1');
             const driverSelect2 = document.getElementById('driverSelect2');
-            const updateChartBtn = document.getElementById('updateChartBtn');
+            const loadH2HBtn = document.getElementById('loadH2HBtn');
             
             if (enableH2H.checked && driverSelect1.value && driverSelect2.value) {
-                updateChartBtn.disabled = false;
+                loadH2HBtn.disabled = false;
             } else {
-                updateChartBtn.disabled = true;
+                loadH2HBtn.disabled = true;
             }
         }
 
@@ -316,7 +668,6 @@
             select2.innerHTML = '<option value="">Select a driver...</option>';
 
             if (!season) {
-                // Disable dropdowns if no season selected
                 select1.disabled = true;
                 select2.disabled = true;
                 return;
@@ -361,52 +712,156 @@
             }
         }
 
-        async function updateCumulativeChart() {
-            if (!currentData) return;
-
+        async function loadHeadToHeadStats() {
             const d1 = document.getElementById('driverSelect1').value;
             const d2 = document.getElementById('driverSelect2').value;
+            const season = document.getElementById('seasonSelect').value;
             
             if (!d1 || !d2) {
                 showAlert('Please select both drivers for head-to-head comparison', 'warning');
                 return;
             }
 
-            const season = document.getElementById('seasonSelect').value;
-            const pointsSystem = document.getElementById('pointsSystemSelect').value;
-            
-            let pointsArray = null;
-            if (pointsSystem === 'custom') {
-                const customPoints = document.getElementById('customPoints').value;
-                pointsArray = customPoints.split(',').map(p => parseInt(p.trim())).filter(p => !isNaN(p));
-            } else if (pointsSystem === 'classic') {
-                pointsArray = [10, 6, 4, 3, 2, 1];
-            } else if (pointsSystem === 'pre_1991') {
-                pointsArray = [9, 6, 4, 3, 2, 1];
-            }
-
             try {
-                const response = await fetch('/api/calculate-standings', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        season_year: parseInt(season),
-                        points_system: pointsArray,
-                        selected_driver_ids: [parseInt(d1), parseInt(d2)]
-                    })
-                });
-
-                if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+                const response = await fetch(`/api/head-to-head?driver1_id=${d1}&driver2_id=${d2}&season=${season}`);
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
                 
                 const data = await response.json();
-                if (data.cumulative_chart) {
-                    const cumulativeData = JSON.parse(data.cumulative_chart);
-                    Plotly.newPlot('cumulativeChart', cumulativeData.data, cumulativeData.layout);
-                }
+                displayHeadToHeadResults(data);
             } catch (error) {
-                console.error('Error updating chart:', error);
-                showAlert('Error updating chart: ' + error.message, 'danger');
+                console.error('Error loading head-to-head stats:', error);
+                showAlert('Error loading head-to-head statistics: ' + error.message, 'danger');
             }
+        }
+
+        function displayHeadToHeadResults(data) {
+            // Display head-to-head record summary
+            const recordSummary = document.getElementById('h2hRecordSummary');
+            const record = data.head_to_head_record;
+            const driver1Name = data.driver1_stats.driver_name;
+            const driver2Name = data.driver2_stats.driver_name;
+            
+            recordSummary.innerHTML = `
+                <h4><i class="fas fa-trophy"></i> Head-to-Head Record</h4>
+                <div class="h2h-score">
+                    ${driver1Name} ${record.driver1_wins} - ${record.driver2_wins} ${driver2Name}
+                </div>
+                <p>Total races: ${record.total_races} | Ties: ${record.ties}</p>
+            `;
+
+            // Display driver statistics
+            const statsGrid = document.getElementById('h2hStatsGrid');
+            statsGrid.innerHTML = `
+                <div class="h2h-stat-card">
+                    <h5>${driver1Name}</h5>
+                    <div class="stat-row">
+                        <span class="stat-label">Wins:</span>
+                        <span class="stat-value">${data.driver1_stats.wins}</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">Poles:</span>
+                        <span class="stat-value">${data.driver1_stats.poles}</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">Podiums:</span>
+                        <span class="stat-value">${data.driver1_stats.podiums}</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">Points Finishes:</span>
+                        <span class="stat-value">${data.driver1_stats.points_finishes}</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">DNFs:</span>
+                        <span class="stat-value">${data.driver1_stats.dnfs}</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">Total Points:</span>
+                        <span class="stat-value">${data.driver1_stats.total_points}</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">Best Finish:</span>
+                        <span class="stat-value">${data.driver1_stats.best_finish || 'N/A'}</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">Avg Finish:</span>
+                        <span class="stat-value">${data.driver1_stats.avg_finish || 'N/A'}</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">Constructor:</span>
+                        <span class="stat-value">${data.driver1_stats.constructor || 'N/A'}</span>
+                    </div>
+                </div>
+                <div class="h2h-stat-card">
+                    <h5>${driver2Name}</h5>
+                    <div class="stat-row">
+                        <span class="stat-label">Wins:</span>
+                        <span class="stat-value">${data.driver2_stats.wins}</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">Poles:</span>
+                        <span class="stat-value">${data.driver2_stats.poles}</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">Podiums:</span>
+                        <span class="stat-value">${data.driver2_stats.podiums}</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">Points Finishes:</span>
+                        <span class="stat-value">${data.driver2_stats.points_finishes}</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">DNFs:</span>
+                        <span class="stat-value">${data.driver2_stats.dnfs}</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">Total Points:</span>
+                        <span class="stat-value">${data.driver2_stats.total_points}</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">Best Finish:</span>
+                        <span class="stat-value">${data.driver2_stats.best_finish || 'N/A'}</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">Avg Finish:</span>
+                        <span class="stat-value">${data.driver2_stats.avg_finish || 'N/A'}</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">Constructor:</span>
+                        <span class="stat-value">${data.driver2_stats.constructor || 'N/A'}</span>
+                    </div>
+                </div>
+            `;
+
+            // Display race-by-race comparison
+            const comparisonBody = document.getElementById('raceComparisonBody');
+            comparisonBody.innerHTML = '';
+            
+            data.race_by_race.forEach(race => {
+                const row = document.createElement('tr');
+                const winnerClass = race.winner === driver1Name || race.winner === driver2Name ? 'winner-cell' : '';
+                
+                row.innerHTML = `
+                    <td>${race.round}</td>
+                    <td>${race.race_name}</td>
+                    <td>${race.driver1_position || 'DNF'}</td>
+                    <td>${race.driver2_position || 'DNF'}</td>
+                    <td class="${winnerClass}">${race.winner}</td>
+                    <td>${race.margin || 'N/A'}</td>
+                `;
+                comparisonBody.appendChild(row);
+            });
+
+            // Update driver names in table header
+            document.getElementById('driver1Name').textContent = driver1Name;
+            document.getElementById('driver2Name').textContent = driver2Name;
+
+            // Show head-to-head results
+            document.getElementById('h2hResults').style.display = 'block';
+            
+            // Scroll to results
+            document.getElementById('h2hResults').scrollIntoView({ behavior: 'smooth' });
         }
 
         async function loadSeasons() {
