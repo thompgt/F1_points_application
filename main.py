@@ -15,13 +15,11 @@ from functools import lru_cache
 
 warnings.filterwarnings("ignore")
 
-app = FastAPI(title="F1 Points Calculator", version="1.0.0")
+    # ...existing code...
 
-# Mount static files and templates
+app = FastAPI(title="F1 Points Calculator", version="1.0.0")
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
-
-# Default modern points system
 DEFAULT_POINTS = [25, 18, 15, 12, 10, 8, 6, 4, 2, 1]
 
 class StandingsRequest(BaseModel):
@@ -65,13 +63,55 @@ def calculate_standings(adjusted_results_with_races, season_year):
     standings.rename(columns={'index': 'Position'}, inplace=True)
     return standings
 
+
+def create_title_fight_chart(adjusted_results_with_races, season_year, points_system_name):
+    """Create a Title Fight chart showing drivers within 10% of the champion, or the runner-up if none qualify."""
+    season_results = adjusted_results_with_races[adjusted_results_with_races['year'] == season_year]
+    if season_results.empty:
+        return None
+    standings = season_results.groupby(['driverId', 'surname', 'forename'], as_index=False)['adjusted_points'].sum()
+    standings = standings.sort_values(by='adjusted_points', ascending=False).reset_index(drop=True)
+    champion_points = standings.iloc[0]['adjusted_points']
+    within_10pct = standings[standings['adjusted_points'] >= 0.9 * champion_points]
+    if len(within_10pct) > 1:
+        title_fight_driver_ids = within_10pct['driverId'].tolist()
+    else:
+        title_fight_driver_ids = standings.iloc[:2]['driverId'].tolist()
+
+    # Prepare cumulative points for qualifying drivers
+    race_number_col = 'round' if 'round' in season_results.columns else None
+    if race_number_col is not None:
+        season_results['race_number'] = season_results[race_number_col]
+        season_results = season_results.sort_values(by=['race_number', 'positionOrder'])
+    else:
+        season_results = season_results.sort_values(by=['year', 'raceId', 'positionOrder'])
+        season_results['race_number'] = season_results.groupby('year')['raceId'].rank(method='dense').astype(int)
+
+    season_results['driver_label'] = season_results.apply(lambda row: f"{row['forename'][0]}. {row['surname']}", axis=1)
+    season_results['cumulative_points'] = season_results.groupby(['driver_label'])['adjusted_points'].cumsum()
+    season_results_filtered = season_results[season_results['driverId'].isin(title_fight_driver_ids)]
+
+    fig = px.line(
+        season_results_filtered,
+        x='race_number',
+        y='cumulative_points',
+        color='driver_label',
+        title=f'Title Fight: Cumulative Points for Top Contenders in {season_year} ({points_system_name})',
+        labels={'race_number': 'Race Number', 'cumulative_points': 'Cumulative Points', 'driver_label': 'Driver'},
+        markers=True
+    )
+    fig.update_layout(
+        height=400,
+        showlegend=True,
+        legend=dict(orientation="v", yanchor="top", y=1, xanchor="left", x=1.02)
+    )
+    return fig.to_json()
+
 def create_cumulative_points_chart(adjusted_results_with_races, season_year, points_system_name, selected_driver_ids: Optional[List[int]] = None):
     """Create a cumulative points chart using Plotly"""
     season_results = adjusted_results_with_races[adjusted_results_with_races['year'] == season_year]
-    
     if season_results.empty:
         return None
-    
     # Sort by race order and build race_number
     race_number_col = 'round' if 'round' in season_results.columns else None
     if race_number_col is not None:
@@ -80,25 +120,22 @@ def create_cumulative_points_chart(adjusted_results_with_races, season_year, poi
     else:
         season_results = season_results.sort_values(by=['year', 'raceId', 'positionOrder'])
         season_results['race_number'] = season_results.groupby('year')['raceId'].rank(method='dense').astype(int)
-    
     # Calculate cumulative points
     season_results['driver_label'] = season_results.apply(lambda row: f"{row['forename'][0]}. {row['surname']}", axis=1)
     season_results['cumulative_points'] = season_results.groupby(['driver_label'])['adjusted_points'].cumsum()
-    
     # Determine which drivers to include
     if selected_driver_ids:
         season_results_filtered = season_results[season_results['driverId'].isin(selected_driver_ids)]
     else:
-        top_10_drivers = (
+        top_12_drivers = (
             season_results.groupby(['driverId', 'surname', 'forename'], as_index=False)['adjusted_points']
             .sum()
             .sort_values(by='adjusted_points', ascending=False)
-            .head(10)
+            .head(12)
         )
         season_results_filtered = season_results[
-            season_results['driverId'].isin(top_10_drivers['driverId'])
+            season_results['driverId'].isin(top_12_drivers['driverId'])
         ]
-    
     # Create the plot
     title_suffix = 'Selected Drivers' if selected_driver_ids else 'Top Drivers'
     fig = px.line(
@@ -110,13 +147,11 @@ def create_cumulative_points_chart(adjusted_results_with_races, season_year, poi
         labels={'race_number': 'Race Number', 'cumulative_points': 'Cumulative Points', 'driver_label': 'Driver'},
         markers=True
     )
-    
     fig.update_layout(
         height=600,
         showlegend=True,
         legend=dict(orientation="v", yanchor="top", y=1, xanchor="left", x=1.02)
     )
-    
     return fig.to_json()
 
 def create_points_distribution_chart(standings, season_year, points_system_name):
@@ -248,6 +283,7 @@ async def calculate_standings_api(request: StandingsRequest):
         
         # Create visualizations
         points_system_name = "Custom" if points_system != DEFAULT_POINTS else "Modern"
+        title_fight_chart = create_title_fight_chart(adjusted_results_with_races, request.season_year, points_system_name)
         cumulative_chart = create_cumulative_points_chart(
             adjusted_results_with_races, request.season_year, points_system_name, request.selected_driver_ids
         )
@@ -258,6 +294,7 @@ async def calculate_standings_api(request: StandingsRequest):
         
         return {
             "standings": standings.to_dict('records'),
+            "title_fight_chart": title_fight_chart,
             "cumulative_chart": cumulative_chart,
             "distribution_chart": distribution_chart,
             "constructors_cumulative_chart": constructors_cumulative_chart,
@@ -304,57 +341,33 @@ async def get_drivers(season: Optional[int] = None):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/api/head-to-head")
-async def get_head_to_head_stats(driver1_id: int, driver2_id: int, season: int):
-    """Get detailed head-to-head statistics for two drivers in a specific season."""
+
+@app.post("/api/head-to-head")
+async def get_head_to_head_stats(selected_driver_ids: list, season: int):
+    """Get head-to-head and filtered stats for selected drivers in a specific season."""
     try:
         results, races, drivers, _, constructors, driver_standings = load_data()
-        
-        # Get season races
         season_races = races[races['year'] == season]
         if season_races.empty:
             raise HTTPException(status_code=404, detail=f"No races found for season {season}")
-        
         race_ids = season_races['raceId'].tolist()
-        
-        # Get driver info
-        driver1_info = drivers[drivers['driverId'] == driver1_id].iloc[0] if not drivers[drivers['driverId'] == driver1_id].empty else None
-        driver2_info = drivers[drivers['driverId'] == driver2_id].iloc[0] if not drivers[drivers['driverId'] == driver2_id].empty else None
-        
-        if not driver1_info or not driver2_info:
-            raise HTTPException(status_code=404, detail="One or both drivers not found")
-        
-        # Get results for both drivers in the season
-        season_results = results[results['raceId'].isin(race_ids)]
-        driver1_results = season_results[season_results['driverId'] == driver1_id].copy()
-        driver2_results = season_results[season_results['driverId'] == driver2_id].copy()
-        
-        # Merge with constructor info
-        driver1_results = pd.merge(driver1_results, constructors[['constructorId', 'name']], on='constructorId', how='left')
-        driver2_results = pd.merge(driver2_results, constructors[['constructorId', 'name']], on='constructorId', how='left')
-        
-        # Merge with race info
-        driver1_results = pd.merge(driver1_results, races[['raceId', 'name', 'round']], on='raceId', how='left')
-        driver2_results = pd.merge(driver2_results, races[['raceId', 'name', 'round']], on='raceId', how='left')
-        
-        # Calculate statistics
-        def calculate_driver_stats(driver_results, driver_info):
-            if driver_results.empty:
-                return {
-                    'driver_name': f"{driver_info['forename']} {driver_info['surname']}",
-                    'wins': 0,
-                    'poles': 0,
-                    'podiums': 0,
-                    'points_finishes': 0,
-                    'dnfs': 0,
-                    'total_points': 0,
-                    'best_finish': None,
-                    'avg_finish': None,
-                    'constructor': None,
-                    'races_entered': 0
-                }
-            
-            # Basic stats
+
+        # Get info and results for selected drivers
+        selected_infos = []
+        selected_stats = []
+        selected_results = []
+        for driver_id in selected_driver_ids:
+            driver_df = drivers[drivers['driverId'] == driver_id]
+            if driver_df.empty:
+                continue
+            driver_info = driver_df.iloc[0]
+            season_results = results[results['raceId'].isin(race_ids)]
+            driver_results = season_results[season_results['driverId'] == driver_id].copy()
+            driver_results = pd.merge(driver_results, constructors[['constructorId', 'name']], on='constructorId', how='left')
+            driver_results = pd.merge(driver_results, races[['raceId', 'name', 'round']], on='raceId', how='left')
+            selected_infos.append(driver_info)
+            selected_results.append(driver_results)
+            # Stats
             wins = len(driver_results[driver_results['positionOrder'] == 1])
             poles = len(driver_results[driver_results['grid'] == 1])
             podiums = len(driver_results[driver_results['positionOrder'].isin([1, 2, 3])])
@@ -362,16 +375,11 @@ async def get_head_to_head_stats(driver1_id: int, driver2_id: int, season: int):
             dnfs = len(driver_results[driver_results['positionText'].str.contains('R|D|W|E', na=False)])
             total_points = driver_results['points'].sum()
             races_entered = len(driver_results)
-            
-            # Best and average finish (excluding DNFs)
             finished_races = driver_results[driver_results['positionOrder'].notna()]
             best_finish = finished_races['positionOrder'].min() if not finished_races.empty else None
             avg_finish = finished_races['positionOrder'].mean() if not finished_races.empty else None
-            
-            # Most common constructor
             constructor = driver_results['name'].mode().iloc[0] if not driver_results['name'].mode().empty else None
-            
-            return {
+            selected_stats.append({
                 'driver_name': f"{driver_info['forename']} {driver_info['surname']}",
                 'wins': int(wins),
                 'poles': int(poles),
@@ -383,56 +391,63 @@ async def get_head_to_head_stats(driver1_id: int, driver2_id: int, season: int):
                 'avg_finish': round(avg_finish, 1) if avg_finish else None,
                 'constructor': constructor,
                 'races_entered': int(races_entered)
-            }
-        
-        driver1_stats = calculate_driver_stats(driver1_results, driver1_info)
-        driver2_stats = calculate_driver_stats(driver2_results, driver2_info)
-        
-        # Head-to-head comparisons
+            })
+
+        # Head-to-head only if two drivers selected
         h2h_comparisons = []
-        for _, race in season_races.iterrows():
-            race_id = race['raceId']
-            d1_race = driver1_results[driver1_results['raceId'] == race_id]
-            d2_race = driver2_results[driver2_results['raceId'] == race_id]
-            
-            if not d1_race.empty and not d2_race.empty:
-                d1_pos = d1_race.iloc[0]['positionOrder'] if pd.notna(d1_race.iloc[0]['positionOrder']) else None
-                d2_pos = d2_race.iloc[0]['positionOrder'] if pd.notna(d2_race.iloc[0]['positionOrder']) else None
-                
+        h2h_record = None
+        if len(selected_driver_ids) == 2:
+            driver1_info = selected_infos[0]
+            driver2_info = selected_infos[1]
+            driver1_results = selected_results[0]
+            driver2_results = selected_results[1]
+            for _, race in season_races.iterrows():
+                race_id = race['raceId']
+                d1_race = driver1_results[driver1_results['raceId'] == race_id]
+                d2_race = driver2_results[driver2_results['raceId'] == race_id]
+                d1_pos = None
+                d2_pos = None
+                if not d1_race.empty:
+                    val = d1_race['positionOrder'].iat[0]
+                    d1_pos = int(val) if pd.notna(val) else None
+                if not d2_race.empty:
+                    val = d2_race['positionOrder'].iat[0]
+                    d2_pos = int(val) if pd.notna(val) else None
                 if d1_pos is not None and d2_pos is not None:
-                    winner = driver1_info['surname'] if d1_pos < d2_pos else driver2_info['surname']
+                    winner = str(driver1_info['surname']) if d1_pos < d2_pos else str(driver2_info['surname'])
                     margin = abs(d1_pos - d2_pos)
-                else:
-                    winner = "Both DNF" if d1_pos is None and d2_pos is None else "One DNF"
+                elif d1_pos is None and d2_pos is None:
+                    winner = "Both DNF"
                     margin = None
-                
+                else:
+                    winner = "One DNF"
+                    margin = None
                 h2h_comparisons.append({
                     'race_name': race['name'],
                     'round': int(race['round']),
-                    'driver1_position': int(d1_pos) if d1_pos else None,
-                    'driver2_position': int(d2_pos) if d2_pos else None,
+                    'driver1_position': d1_pos,
+                    'driver2_position': d2_pos,
                     'winner': winner,
                     'margin': margin
                 })
-        
-        # Calculate head-to-head record
-        h2h_wins_d1 = len([c for c in h2h_comparisons if c['winner'] == driver1_info['surname']])
-        h2h_wins_d2 = len([c for c in h2h_comparisons if c['winner'] == driver2_info['surname']])
-        h2h_ties = len([c for c in h2h_comparisons if c['winner'] == "Both DNF"])
-        
-        return {
-            'season': season,
-            'driver1_stats': driver1_stats,
-            'driver2_stats': driver2_stats,
-            'head_to_head_record': {
+            driver1_surname = str(driver1_info['surname'])
+            driver2_surname = str(driver2_info['surname'])
+            h2h_wins_d1 = len([c for c in h2h_comparisons if c['winner'] == driver1_surname])
+            h2h_wins_d2 = len([c for c in h2h_comparisons if c['winner'] == driver2_surname])
+            h2h_ties = len([c for c in h2h_comparisons if c['winner'] == "Both DNF"])
+            h2h_record = {
                 'driver1_wins': h2h_wins_d1,
                 'driver2_wins': h2h_wins_d2,
                 'ties': h2h_ties,
                 'total_races': len(h2h_comparisons)
-            },
+            }
+
+        return {
+            'season': season,
+            'selected_stats': selected_stats,
+            'head_to_head_record': h2h_record,
             'race_by_race': h2h_comparisons
         }
-        
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

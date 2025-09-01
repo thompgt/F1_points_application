@@ -577,6 +577,10 @@
                             <!-- Charts -->
                             <div class="mt-4">
                                 <div class="chart-container">
+                                    <h4><i class="fas fa-trophy"></i> Title Fight</h4>
+                                    <div id="titleFightChart"></div>
+                                </div>
+                                <div class="chart-container">
                                     <h4><i class="fas fa-chart-line"></i> Cumulative Points</h4>
                                     <div id="cumulativeChart"></div>
                                 </div>
@@ -980,6 +984,11 @@
             });
 
             // Display charts
+            if (data.title_fight_chart) {
+                const titleFightData = JSON.parse(data.title_fight_chart);
+                Plotly.newPlot('titleFightChart', titleFightData.data, titleFightData.layout);
+            }
+
             if (data.cumulative_chart) {
                 const cumulativeData = JSON.parse(data.cumulative_chart);
                 Plotly.newPlot('cumulativeChart', cumulativeData.data, cumulativeData.layout);
