@@ -190,8 +190,8 @@
 
         .standings-table th {
             background: linear-gradient(45deg, var(--f1-red), #ff4444);
-            color: #222;
-            background-color: #fff;
+            color: #fff;
+            background-color: var(--f1-red);
             border: none;
             padding: 1.2rem;
             font-weight: 700;
@@ -492,8 +492,14 @@
                         <div id="results" style="display: none;">
                             <!-- Standings Table -->
                             <div class="standings-table">
-                                <h3 class="p-3 mb-0"><i class="fas fa-list-ol"></i> Driver Standings</h3>
-                                <div class="table-responsive">
+                                <div class="d-flex justify-content-between align-items-center">
+                                    <h3 class="p-3 mb-0" style="color: #fff;"><i class="fas fa-list-ol"></i> <span id="standingsTitle">Driver Standings</span></h3>
+                                    <div>
+                                        <button id="showDriversBtn" class="btn btn-outline-light btn-sm me-2" onclick="showDrivers()">Drivers</button>
+                                        <button id="showConstructorsBtn" class="btn btn-outline-light btn-sm" onclick="showConstructors()">Constructors</button>
+                                    </div>
+                                </div>
+                                <div class="table-responsive" id="driversTableSection">
                                     <table class="table table-hover mb-0">
                                         <thead>
                                             <tr>
@@ -504,6 +510,19 @@
                                             </tr>
                                         </thead>
                                         <tbody id="standingsTableBody">
+                                        </tbody>
+                                    </table>
+                                </div>
+                                <div class="table-responsive" id="constructorsTableSection" style="display:none;">
+                                    <table class="table table-hover mb-0">
+                                        <thead>
+                                            <tr>
+                                                <th>Position</th>
+                                                <th>Constructor</th>
+                                                <th>Points</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="constructorsTableBody">
                                         </tbody>
                                     </table>
                                 </div>
@@ -966,14 +985,12 @@
         }
 
         function displayResults(data) {
-            // Display standings table
+            // Display driver standings table
             const tbody = document.getElementById('standingsTableBody');
             tbody.innerHTML = '';
-            
             data.standings.forEach((driver, index) => {
                 const row = document.createElement('tr');
                 const positionClass = index < 3 ? `position-${index + 1}` : '';
-                
                 row.innerHTML = `
                     <td class="${positionClass}"><strong>${driver.Position}</strong></td>
                     <td>${driver.forename} ${driver.surname}</td>
@@ -981,6 +998,33 @@
                     <td><strong>${driver.adjusted_points}</strong></td>
                 `;
                 tbody.appendChild(row);
+            });
+
+            // Display constructors standings table
+            const ctbody = document.getElementById('constructorsTableBody');
+            ctbody.innerHTML = '';
+            // Aggregate points by constructor
+            const constructorMap = {};
+            data.standings.forEach((driver) => {
+                if (!driver.constructor_name) return;
+                if (!constructorMap[driver.constructor_name]) {
+                    constructorMap[driver.constructor_name] = 0;
+                }
+                constructorMap[driver.constructor_name] += driver.adjusted_points;
+            });
+            // Convert to array and sort
+            const constructorsArr = Object.entries(constructorMap)
+                .map(([name, points]) => ({ name, points }))
+                .sort((a, b) => b.points - a.points);
+            constructorsArr.forEach((constructor, idx) => {
+                const row = document.createElement('tr');
+                const positionClass = idx < 3 ? `position-${idx + 1}` : '';
+                row.innerHTML = `
+                    <td class="${positionClass}"><strong>${idx + 1}</strong></td>
+                    <td>${constructor.name}</td>
+                    <td><strong>${constructor.points}</strong></td>
+                `;
+                ctbody.appendChild(row);
             });
 
             // Display charts
@@ -1006,6 +1050,25 @@
 
             // Show results section
             document.getElementById('results').style.display = 'block';
+            // Default to drivers table
+            showDrivers();
+
+        }
+
+        function showDrivers() {
+            document.getElementById('driversTableSection').style.display = '';
+            document.getElementById('constructorsTableSection').style.display = 'none';
+            document.getElementById('standingsTitle').textContent = 'Driver Standings';
+            document.getElementById('showDriversBtn').classList.add('active');
+            document.getElementById('showConstructorsBtn').classList.remove('active');
+        }
+
+        function showConstructors() {
+            document.getElementById('driversTableSection').style.display = 'none';
+            document.getElementById('constructorsTableSection').style.display = '';
+            document.getElementById('standingsTitle').textContent = 'Constructor Standings';
+            document.getElementById('showDriversBtn').classList.remove('active');
+            document.getElementById('showConstructorsBtn').classList.add('active');
             
             // Scroll to results
             document.getElementById('results').scrollIntoView({ behavior: 'smooth' });
