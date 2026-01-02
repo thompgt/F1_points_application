@@ -1,0 +1,26 @@
+# Environment variables
+.env
+
+# Exports directory
+exports/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# ChromaDB
+chroma/
+
+# Virtual environment
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db

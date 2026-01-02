@@ -1,7 +1,7 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, FileResponse
 from fastapi.requests import Request
 from pydantic import BaseModel
 import pandas as pd
@@ -12,6 +12,12 @@ import json
 from typing import List, Optional
 import warnings
 from functools import lru_cache
+import os
+from dotenv import load_dotenv
+from season_simulator import simulate_season
+
+# Load environment variables
+load_dotenv()
 
 warnings.filterwarnings("ignore")
 
@@ -28,6 +34,11 @@ class StandingsRequest(BaseModel):
     season_year: int
     points_system: Optional[List[int]] = None
     selected_driver_ids: Optional[List[int]] = None
+
+class SimulateSeasonRequest(BaseModel):
+    season_year: int
+    points_system: Optional[List[int]] = None
+    gemini_api_key: Optional[str] = None
 
 @lru_cache(maxsize=1)
 def load_data():
@@ -66,75 +77,100 @@ def calculate_standings(adjusted_results_with_races, season_year):
 
 def create_cumulative_points_chart(adjusted_results_with_races, season_year, points_system_name, selected_driver_ids: Optional[List[int]] = None):
     """Create a cumulative points chart using Plotly"""
-    season_results = adjusted_results_with_races[adjusted_results_with_races['year'] == season_year]
+    season_results = adjusted_results_with_races[adjusted_results_with_races['year'] == season_year].copy()
     
     if season_results.empty:
         return None
     
-    # Sort by race order and build race_number
-    race_number_col = 'round' if 'round' in season_results.columns else None
-    if race_number_col is not None:
-        season_results['race_number'] = season_results[race_number_col]
-        season_results = season_results.sort_values(by=['race_number', 'positionOrder'])
+    # Use 'round' column if available, otherwise create race numbers from raceId
+    if 'round' in season_results.columns:
+        season_results = season_results.sort_values(by=['round', 'driverId'])
+        season_results['race_number'] = season_results['round']
     else:
-        season_results = season_results.sort_values(by=['year', 'raceId', 'positionOrder'])
-        season_results['race_number'] = season_results.groupby('year')['raceId'].rank(method='dense').astype(int)
+        # Create consistent race numbering
+        race_order = season_results[['raceId']].drop_duplicates().sort_values('raceId').reset_index(drop=True)
+        race_order['race_number'] = race_order.index + 1
+        season_results = pd.merge(season_results, race_order, on='raceId')
+        season_results = season_results.sort_values(by=['race_number', 'driverId'])
     
-    # Calculate cumulative points
-    season_results['cumulative_points'] = season_results.groupby(['surname', 'forename'])['adjusted_points'].cumsum()
+    # Calculate cumulative points for each driver
+    season_results = season_results.sort_values(['driverId', 'race_number'])
+    season_results['cumulative_points'] = season_results.groupby('driverId')['adjusted_points'].cumsum()
     
     # Determine which drivers to include
     if selected_driver_ids:
-        season_results_filtered = season_results[season_results['driverId'].isin(selected_driver_ids)]
+        top_drivers_list = selected_driver_ids
     else:
-        top_10_drivers = (
-            season_results.groupby(['driverId', 'surname', 'forename'], as_index=False)['adjusted_points']
+        # Get top 10 drivers by total points
+        driver_totals = (
+            season_results.groupby('driverId')['adjusted_points']
             .sum()
-            .sort_values(by='adjusted_points', ascending=False)
+            .sort_values(ascending=False)
             .head(10)
         )
-        season_results_filtered = season_results[
-            season_results['driverId'].isin(top_10_drivers['driverId'])
-        ]
+        top_drivers_list = driver_totals.index.tolist()
+    
+    # Filter for selected drivers
+    season_results_filtered = season_results[season_results['driverId'].isin(top_drivers_list)].copy()
+    
+    # Create driver label for legend
+    season_results_filtered['driver_label'] = season_results_filtered['forename'] + ' ' + season_results_filtered['surname']
+    
+    # Sort by race number for proper line plotting
+    season_results_filtered = season_results_filtered.sort_values(['driver_label', 'race_number'])
     
     # Create the plot
-    title_suffix = 'Selected Drivers' if selected_driver_ids else 'Top Drivers'
+    title_suffix = 'Selected Drivers' if selected_driver_ids else 'Top 10 Drivers'
     fig = px.line(
         season_results_filtered,
         x='race_number',
         y='cumulative_points',
-        color='surname',
-        title=f'Cumulative Points for {title_suffix} in {season_year} Season ({points_system_name})',
-        labels={'race_number': 'Race Number', 'cumulative_points': 'Cumulative Points', 'surname': 'Driver'},
+        color='driver_label',
+        title=f'Cumulative Points - {season_year} Season ({points_system_name})',
+        labels={'race_number': 'Race Number', 'cumulative_points': 'Cumulative Points', 'driver_label': 'Driver'},
         markers=True
     )
     
     fig.update_layout(
         height=600,
         showlegend=True,
-        legend=dict(orientation="v", yanchor="top", y=1, xanchor="left", x=1.02)
+        legend=dict(orientation="v", yanchor="top", y=1, xanchor="left", x=1.02),
+        xaxis_title='Race Number',
+        yaxis_title='Cumulative Points',
+        template='plotly_white'
     )
     
     return fig.to_json()
 
 def create_points_distribution_chart(standings, season_year, points_system_name):
-    """Create a points distribution chart"""
+    """Create a points distribution chart showing top drivers' total points"""
     if standings.empty:
         return None
     
+    # Take top 15 drivers and create full name label
+    top_standings = standings.head(15).copy()
+    top_standings['driver_name'] = top_standings['forename'] + ' ' + top_standings['surname']
+    
     fig = px.bar(
-        standings.head(15),
-        x='surname',
+        top_standings,
+        x='driver_name',
         y='adjusted_points',
-        title=f'Points Distribution for {season_year} Season ({points_system_name})',
-        labels={'surname': 'Driver', 'adjusted_points': 'Total Points'},
+        title=f'Final Points Distribution - {season_year} Season ({points_system_name})',
+        labels={'driver_name': 'Driver', 'adjusted_points': 'Total Points'},
         color='adjusted_points',
-        color_continuous_scale='viridis'
+        color_continuous_scale='Viridis',
+        text='adjusted_points'
     )
+    
+    fig.update_traces(texttemplate='%{text:.1f}', textposition='outside')
     
     fig.update_layout(
         height=500,
-        xaxis_tickangle=-45
+        xaxis_tickangle=-45,
+        showlegend=False,
+        xaxis_title='Driver',
+        yaxis_title='Total Points',
+        template='plotly_white'
     )
     
     return fig.to_json()
@@ -145,28 +181,45 @@ def create_constructors_cumulative_chart(adjusted_results_with_races, season_yea
     if season_results.empty or 'constructor_name' not in season_results.columns:
         return None
 
-    # Race number for x-axis
-    race_number_col = 'round' if 'round' in season_results.columns else None
-    if race_number_col is not None:
-        season_results['race_number'] = season_results[race_number_col]
+    # Use 'round' column if available, otherwise create race numbers
+    if 'round' in season_results.columns:
+        season_results['race_number'] = season_results['round']
     else:
-        season_results['race_number'] = season_results.groupby('year')['raceId'].rank(method='dense').astype(int)
+        # Create consistent race numbering
+        race_order = season_results[['raceId']].drop_duplicates().sort_values('raceId').reset_index(drop=True)
+        race_order['race_number'] = race_order.index + 1
+        season_results = pd.merge(season_results, race_order, on='raceId')
 
-    # Sum adjusted points per constructor per race
-    per_race = season_results.groupby(['race_number', 'constructor_name'], as_index=False)['adjusted_points'].sum()
-    per_race = per_race.sort_values(by=['constructor_name', 'race_number'])
-    per_race['cumulative_points'] = per_race.groupby('constructor_name')['adjusted_points'].cumsum()
+    # Sum all drivers' points per constructor per race
+    constructor_race_points = season_results.groupby(['race_number', 'constructor_name'], as_index=False)['adjusted_points'].sum()
+    constructor_race_points = constructor_race_points.sort_values(by=['constructor_name', 'race_number'])
+    
+    # Calculate cumulative sum for each constructor
+    constructor_race_points['cumulative_points'] = constructor_race_points.groupby('constructor_name')['adjusted_points'].cumsum()
+    
+    # Get top 10 constructors by final total points
+    final_totals = constructor_race_points.groupby('constructor_name')['cumulative_points'].max().sort_values(ascending=False).head(10)
+    top_constructors = final_totals.index.tolist()
+    
+    constructor_filtered = constructor_race_points[constructor_race_points['constructor_name'].isin(top_constructors)]
 
     fig = px.line(
-        per_race,
+        constructor_filtered,
         x='race_number',
         y='cumulative_points',
         color='constructor_name',
-        title=f'Constructors Cumulative Points in {season_year} Season ({points_system_name})',
+        title=f'Constructors Cumulative Points - {season_year} Season ({points_system_name})',
         labels={'race_number': 'Race Number', 'cumulative_points': 'Cumulative Points', 'constructor_name': 'Constructor'},
         markers=True
     )
-    fig.update_layout(height=600)
+    fig.update_layout(
+        height=600,
+        showlegend=True,
+        legend=dict(orientation="v", yanchor="top", y=1, xanchor="left", x=1.02),
+        xaxis_title='Race Number',
+        yaxis_title='Cumulative Points',
+        template='plotly_white'
+    )
     return fig.to_json()
 
 @app.get("/", response_class=HTMLResponse)
@@ -433,6 +486,125 @@ async def get_head_to_head_stats(driver1_id: int, driver2_id: int, season: int):
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/simulate-season")
+async def simulate_season_endpoint(request: SimulateSeasonRequest):
+    """
+    Generate AI-powered season summary with RAG, web scraping, and PDF export
+    """
+    try:
+        # Get Gemini API key from request or environment
+        gemini_api_key = request.gemini_api_key or os.getenv('GEMINI_API_KEY')
+        
+        if not gemini_api_key:
+            raise HTTPException(
+                status_code=400, 
+                detail="Gemini API key required. Set GEMINI_API_KEY environment variable or provide in request."
+            )
+        
+        # Get points system
+        if request.points_system is None:
+            points_system = DEFAULT_POINTS
+            points_system_name = "Modern"
+        else:
+            points_system = request.points_system
+            points_system_name = "Custom"
+        
+        # Load data and calculate standings
+        results, races, drivers, _, constructors, _ = load_data()
+        adjusted_results = adjust_points(results, points_system)
+        
+        # Merge with driver and race and constructor information
+        adjusted_results_with_drivers = pd.merge(
+            adjusted_results,
+            drivers[['driverId', 'surname', 'forename']],
+            on='driverId'
+        )
+        
+        adjusted_results_with_constructors = pd.merge(
+            adjusted_results_with_drivers,
+            constructors[['constructorId', 'name']].rename(columns={'name': 'constructor_name'}),
+            on='constructorId'
+        )
+        
+        race_cols = ['raceId', 'year', 'name']
+        if 'round' in races.columns:
+            race_cols.append('round')
+        
+        adjusted_results_with_races = pd.merge(
+            adjusted_results_with_constructors,
+            races[race_cols],
+            on='raceId'
+        )
+        
+        # Calculate standings
+        standings = calculate_standings(adjusted_results_with_races, request.season_year)
+        
+        # Determine primary constructor per driver
+        season_rows = adjusted_results_with_races[adjusted_results_with_races['year'] == request.season_year]
+        if not season_rows.empty:
+            constructor_mode = (
+                season_rows
+                .groupby(['surname', 'forename', 'constructor_name'], as_index=False)['raceId']
+                .count()
+                .sort_values(['surname', 'forename', 'raceId'], ascending=[True, True, False])
+            )
+            constructor_mode = constructor_mode.drop_duplicates(subset=['surname', 'forename'], keep='first')
+            standings = pd.merge(
+                standings,
+                constructor_mode[['surname', 'forename', 'constructor_name']],
+                on=['surname', 'forename'],
+                how='left'
+            )
+        
+        if standings.empty:
+            raise HTTPException(status_code=404, detail=f"No data found for season {request.season_year}")
+        
+        # Create charts
+        cumulative_chart = create_cumulative_points_chart(
+            adjusted_results_with_races, request.season_year, points_system_name
+        )
+        distribution_chart = create_points_distribution_chart(standings, request.season_year, points_system_name)
+        constructors_chart = create_constructors_cumulative_chart(
+            adjusted_results_with_races, request.season_year, points_system_name
+        )
+        
+        # Prepare data for simulator
+        standings_data = {
+            'standings': standings.to_dict('records'),
+            'season_year': request.season_year
+        }
+        
+        chart_json_strings = {
+            'cumulative_chart': cumulative_chart,
+            'distribution_chart': distribution_chart,
+            'constructors_chart': constructors_chart
+        }
+        
+        # Generate PDF using the simulator
+        pdf_path = simulate_season(
+            season_year=request.season_year,
+            standings_data=standings_data,
+            points_system_name=points_system_name,
+            chart_json_strings=chart_json_strings,
+            gemini_api_key=gemini_api_key,
+            output_dir="exports"
+        )
+        
+        if pdf_path and os.path.exists(pdf_path):
+            # Return the PDF file
+            return FileResponse(
+                pdf_path, 
+                media_type='application/pdf',
+                filename=os.path.basename(pdf_path)
+            )
+        else:
+            raise HTTPException(status_code=500, detail="Failed to generate PDF report")
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error simulating season: {str(e)}")
 
 if __name__ == "__main__":
     import uvicorn

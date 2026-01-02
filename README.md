@@ -13,6 +13,11 @@ A full-stack web application that allows users to calculate Formula 1 driver sta
 - **Interactive Visualizations**: 
   - Cumulative points chart showing how drivers' points evolved throughout the season
   - Points distribution bar chart for the top 15 drivers
+- **AI-Powered Season Simulation** (NEW!):
+  - Generate comprehensive season reports with Gemini AI
+  - RAG (Retrieval Augmented Generation) using Wikipedia data
+  - Web scraping for season images with Beautiful Soup
+  - Export detailed PDF reports with charts, images, and AI analysis
 - **Modern UI**: Responsive design with Bootstrap and custom styling
 - **Real-time Calculations**: Fast API responses with Plotly charts
 
@@ -25,7 +30,12 @@ A full-stack web application that allows users to calculate Formula 1 driver sta
    pip install -r requirements.txt
    ```
 
-3. **Ensure you have the required CSV files**:
+3. **Set up Gemini API Key** (for AI Season Simulation):
+   - Get your API key from [Google AI Studio](https://makersuite.google.com/app/apikey)
+   - Copy `.env.example` to `.env`
+   - Add your API key: `GEMINI_API_KEY=your_key_here`
+
+4. **Ensure you have the required CSV files**:
    - `results.csv` - Race results data
    - `races.csv` - Race information
    - `drivers.csv` - Driver information
@@ -53,12 +63,24 @@ A full-stack web application that allows users to calculate Formula 1 driver sta
 
 5. **Click "Calculate Standings"** to see the results
 
+6. **Generate AI Season Report** (Optional):
+   - Click "Simulate Season" button
+   - Enter your Gemini API key when prompted (or set in `.env`)
+   - Wait 30-60 seconds for the AI to generate a comprehensive report
+   - PDF will download automatically with:
+     - AI-generated season summary and analysis
+     - Historical context from Wikipedia (RAG)
+     - All standings and statistics
+     - Interactive charts
+     - Season images from web scraping
+
 ## API Endpoints
 
 - `GET /` - Main application page
 - `GET /api/seasons` - Get all available seasons
 - `POST /api/calculate-standings` - Calculate standings for a season with specified points system
 - `GET /api/points-systems` - Get predefined points systems
+- `POST /api/simulate-season` - Generate AI-powered season simulation PDF (requires Gemini API key)
 
 ## Example API Usage
 
@@ -95,6 +117,9 @@ The application uses historical F1 data from CSV files containing:
 - **Styling**: Bootstrap 5, Custom CSS
 - **Visualizations**: Plotly.js
 - **Data Processing**: Pandas
+- **AI/ML**: Google Gemini API, ChromaDB (Vector Database), RAG
+- **Web Scraping**: Beautiful Soup, Requests, Wikipedia API
+- **PDF Generation**: ReportLab, Kaleido
 - **Icons**: Font Awesome
 
 ## Customization
