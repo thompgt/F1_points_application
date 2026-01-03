@@ -8,9 +8,28 @@
     <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
     <style>
         body { background: #0f0f0f; color: #fff; font-family: Arial, sans-serif; }
-        .container { padding: 2rem; }
+        .container { padding: 2rem; padding-left: 1rem; padding-right: 1.5rem; }
         .card { background: #1f1f1f; border: 1px solid rgba(255,255,255,0.06); }
-        .summary { white-space: pre-wrap; }
+        .summary { white-space: pre-wrap; line-height: 1.45; color: #ffffff; max-height: 220px; overflow-y: auto; }
+        /* Ensure stats table text is white and doesn't wrap the metric column */
+        #statsTable .table th, #statsTable .table td {
+            color: #ffffff !important;
+            white-space: nowrap;
+        }
+        /* Force card headings and wiki summary text to white for readability */
+        .card h5, #statsCard h5, .card .summary, #wikiSummary {
+            color: #ffffff !important;
+        }
+
+        /* Slight left shift for the left column cards to improve visual alignment */
+        @media (min-width: 992px) {
+            .col-lg-4.mb-3 { padding-left: 0.25rem; }
+            .col-lg-8 { padding-right: 0.25rem; }
+        }
+        /* Ensure race table headers and cells are white */
+        #raceTable th, #raceTable td {
+            color: #ffffff !important;
+        }
     </style>
 </head>
 <body>
@@ -105,17 +124,23 @@
         function renderStats(data, mode){
             const statsDiv = document.getElementById('statsTable');
             const d1 = data.driver1_stats; const d2 = data.driver2_stats;
-            // Build simple table
+            function fmtNumber(v, decimals){
+                if (v === null || v === undefined || v === 'N/A') return 'N/A';
+                const n = Number(v);
+                if (Number.isNaN(n)) return v;
+                return n.toFixed(decimals);
+            }
+            // Build simple table with formatted numbers
             const rows = [
                 ['Metric', d1.driver_name, d2.driver_name],
-                ['Wins', d1.wins, d2.wins],
-                ['Podiums', d1.podiums, d2.podiums],
-                ['Poles', d1.poles, d2.poles],
-                ['Points', d1.total_points, d2.total_points],
-                ['DNFs', d1.dnfs, d2.dnfs],
-                ['Avg Grid', d1.avg_grid || 'N/A', d2.avg_grid || 'N/A'],
-                ['Median Grid', d1.median_grid || 'N/A', d2.median_grid || 'N/A'],
-                ['Avg Grid Gap to Teammate', d1.avg_grid_gap_to_teammate || 'N/A', d2.avg_grid_gap_to_teammate || 'N/A']
+                ['Wins', d1.wins ?? 'N/A', d2.wins ?? 'N/A'],
+                ['Podiums', d1.podiums ?? 'N/A', d2.podiums ?? 'N/A'],
+                ['Poles', d1.poles ?? 'N/A', d2.poles ?? 'N/A'],
+                ['Points', (d1.total_points!=null)? Number(d1.total_points).toFixed(0) : 'N/A', (d2.total_points!=null)? Number(d2.total_points).toFixed(0) : 'N/A'],
+                ['DNFs', d1.dnfs ?? 'N/A', d2.dnfs ?? 'N/A'],
+                ['Avg Grid', (d1.avg_grid!=null)? fmtNumber(d1.avg_grid,1) : 'N/A', (d2.avg_grid!=null)? fmtNumber(d2.avg_grid,1) : 'N/A'],
+                ['Median Grid', (d1.median_grid!=null)? fmtNumber(d1.median_grid,1) : 'N/A', (d2.median_grid!=null)? fmtNumber(d2.median_grid,1) : 'N/A'],
+                ['Avg Grid Gap to Teammate', (d1.avg_grid_gap_to_teammate!=null)? fmtNumber(d1.avg_grid_gap_to_teammate,3) : 'N/A', (d2.avg_grid_gap_to_teammate!=null)? fmtNumber(d2.avg_grid_gap_to_teammate,3) : 'N/A']
             ];
             let html = '<table class="table table-sm table-dark mb-0"><tbody>';
             rows.forEach(r => { html += `<tr><th>${r[0]}</th><td>${r[1]}</td><td>${r[2]}</td></tr>`; });
@@ -126,7 +151,8 @@
             const tbody = document.querySelector('#raceTable tbody'); tbody.innerHTML = '';
             data.race_by_race.forEach(r => {
                 const tr = document.createElement('tr');
-                tr.innerHTML = `<td>${r.round}</td><td>${r.race_name}</td><td>${r.driver1_position||'DNF'}</td><td>${r.driver2_position||'DNF'}</td><td>${r.winner}</td><td>${r.margin||'N/A'}</td>`;
+                const marginText = (r.margin !== null && r.margin !== undefined) ? (r.margin + 's') : 'N/A';
+                tr.innerHTML = `<td>${r.round}</td><td>${r.race_name}</td><td>${r.driver1_position||'DNF'}</td><td>${r.driver2_position||'DNF'}</td><td>${r.winner}</td><td>${marginText}</td>`;
                 tbody.appendChild(tr);
             });
         }

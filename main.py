@@ -8,6 +8,12 @@ import pandas as pd
 import plotly.graph_objects as go
 import plotly.express as px
 from plotly.utils import PlotlyJSONEncoder
+# Optional fastf1 support for qualifying lap time gaps
+try:
+    import fastf1
+    FASTF1_AVAILABLE = True
+except Exception:
+    FASTF1_AVAILABLE = False
 from plotly.subplots import make_subplots
 import json
 import plotly.io as pio
@@ -144,7 +150,16 @@ def create_cumulative_points_chart(adjusted_results_with_races, season_year, poi
     
     # Build serializable traces (plain Python lists) to avoid binary-packed arrays
     traces = []
-    for driver_label, grp in season_results_filtered.groupby('driver_label'):
+    # Sort drivers by final cumulative points descending so legend is ordered by points
+    driver_order = (
+        season_results_filtered.groupby('driver_label')['cumulative_points']
+        .max()
+        .sort_values(ascending=False)
+        .index
+        .tolist()
+    )
+    for driver_label in driver_order:
+        grp = season_results_filtered[season_results_filtered['driver_label'] == driver_label]
         x = grp['race_number'].astype(int).tolist()
         y = grp['cumulative_points'].astype(float).tolist()
         traces.append({
@@ -169,6 +184,8 @@ def create_points_distribution_chart(standings, season_year, points_system_name)
     top_standings = standings.head(15).copy()
     top_standings['driver_name'] = top_standings['forename'] + ' ' + top_standings['surname']
     
+    # Ensure bars are sorted by points descending
+    top_standings = top_standings.sort_values(by='adjusted_points', ascending=False)
     fig = px.bar(
         top_standings,
         x='driver_name',
@@ -248,9 +265,10 @@ def create_constructors_cumulative_chart(adjusted_results_with_races, season_yea
         yaxis_title='Cumulative Points',
         template='plotly_white'
     )
-    # Build serializable traces for constructors cumulative chart
+    # Build serializable traces for constructors cumulative chart, ordered by final totals descending
     traces = []
-    for constructor_name, grp in constructor_filtered.groupby('constructor_name'):
+    for constructor_name in final_totals.index.tolist():
+        grp = constructor_filtered[constructor_filtered['constructor_name'] == constructor_name]
         x = grp['race_number'].astype(int).tolist()
         y = grp['cumulative_points'].astype(float).tolist()
         traces.append({
@@ -441,39 +459,103 @@ async def api_head_to_head(driver1_id: int, driver2_id: int, season: Optional[in
             poles = int(d[d.get('grid', pd.Series()) == 1].shape[0]) if 'grid' in d.columns else 0
             total_points = float(d['adjusted_points'].sum()) if 'adjusted_points' in d.columns else 0.0
 
-            # DNFs: rows where positionOrder is null or positionText indicates retirement
+            # DNFs: count if completed laps < 90% of race laps, fallback to positionOrder missing
             dnfs = 0
-            if 'positionOrder' in d.columns:
+            if 'laps' in d.columns and 'raceId' in d.columns:
+                for _, rr in d.iterrows():
+                    try:
+                        race_id = rr['raceId']
+                        race_row = races[races['raceId'] == race_id]
+                        if not race_row.empty and 'laps' in race_row.columns and not pd.isna(race_row.iloc[0]['laps']):
+                            total_laps = float(race_row.iloc[0]['laps'])
+                            driver_laps = float(rr.get('laps', 0) or 0)
+                            if total_laps > 0 and driver_laps < 0.9 * total_laps:
+                                dnfs += 1
+                                continue
+                    except Exception:
+                        pass
+                if dnfs == 0 and 'positionOrder' in d.columns:
+                    dnfs = int(d['positionOrder'].isna().sum())
+            elif 'positionOrder' in d.columns:
                 dnfs = int(d['positionOrder'].isna().sum())
             elif 'positionText' in d.columns:
                 dnfs = int(d['positionText'].isin(['R', 'D', 'DNF']).sum())
 
-            # Grid stats
+            # Grid stats (rounded to nearest tenth)
             avg_grid = None
             median_grid = None
             if 'grid' in d.columns and not d['grid'].dropna().empty:
                 grids = d['grid'].replace(0, pd.NA).dropna().astype(float)
                 if not grids.empty:
-                    avg_grid = float(grids.mean())
-                    median_grid = float(grids.median())
+                    avg_grid = round(float(grids.mean()), 1)
+                    median_grid = round(float(grids.median()), 1)
 
-            # Average grid gap to teammate: for races where this driver and at least one teammate (same constructor) also raced
+            # Average qualifying gap to teammate: try fastf1 (qualifying lap-time gap) otherwise fallback to grid difference
             avg_grid_gap = None
-            if 'constructorId' in d.columns and 'grid' in d.columns:
+            if 'constructorId' in d.columns:
                 gaps = []
+                session_cache = {}
                 for _, row in d.iterrows():
-                    race_id = row['raceId']
+                    race_id = row.get('raceId')
                     constructor = row.get('constructorId')
                     if pd.isna(race_id) or pd.isna(constructor):
                         continue
                     peers = df[(df['raceId'] == race_id) & (df['constructorId'] == constructor) & (df['driverId'] != driver_id)]
                     if peers.empty:
                         continue
-                    # take nearest teammate if more than one
                     peer = peers.iloc[0]
-                    if pd.isna(row['grid']) or pd.isna(peer.get('grid')):
-                        continue
-                    gaps.append(abs(float(row['grid']) - float(peer['grid'])))
+
+                    qual_gap_found = False
+                    if FASTF1_AVAILABLE:
+                        try:
+                            race_row = races[races['raceId'] == race_id]
+                            if race_row.empty:
+                                raise Exception('no race row')
+                            year = int(race_row.iloc[0]['year'])
+                            round_no = int(race_row.iloc[0]['round']) if 'round' in race_row.columns and not pd.isna(race_row.iloc[0]['round']) else None
+                            if round_no is None:
+                                raise Exception('no round')
+                            sess_key = f"{year}-{round_no}"
+                            if sess_key not in session_cache:
+                                for sname in ['Q', 'SQ', 'Qualifying']:
+                                    try:
+                                        session = fastf1.get_session(year, round_no, sname)
+                                        session.load(laps=True, telemetry=False)
+                                        session_cache[sess_key] = session
+                                        break
+                                    except Exception:
+                                        continue
+                            session = session_cache.get(sess_key)
+                            if session is not None:
+                                code1 = None
+                                code2 = None
+                                try:
+                                    code1 = drivers.loc[drivers['driverId'] == int(driver_id), 'code'].values[0]
+                                except Exception:
+                                    code1 = None
+                                try:
+                                    code2 = drivers.loc[drivers['driverId'] == int(peer['driverId']), 'code'].values[0]
+                                except Exception:
+                                    code2 = None
+                                if code1 and code2:
+                                    laps1 = session.laps.pick_driver(code1)
+                                    laps2 = session.laps.pick_driver(code2)
+                                    if not laps1.empty and not laps2.empty:
+                                        t1 = laps1['LapTime'].min()
+                                        t2 = laps2['LapTime'].min()
+                                        if pd.notna(t1) and pd.notna(t2):
+                                            s1 = t1.total_seconds()
+                                            s2 = t2.total_seconds()
+                                            gaps.append(abs(s1 - s2))
+                                            qual_gap_found = True
+                        except Exception:
+                            pass
+                    if not qual_gap_found:
+                        if pd.notna(row.get('grid')) and pd.notna(peer.get('grid')):
+                            try:
+                                gaps.append(abs(float(row.get('grid')) - float(peer.get('grid'))))
+                            except Exception:
+                                pass
                 if gaps:
                     avg_grid_gap = float(pd.Series(gaps).mean())
 
@@ -521,6 +603,16 @@ async def api_head_to_head(driver1_id: int, driver2_id: int, season: Optional[in
                 winner = driver1_stats['driver_name']
             elif pos2 and not pos1:
                 winner = driver2_stats['driver_name']
+            # Compute margin in seconds if finish time milliseconds available for both
+            margin = None
+            try:
+                if not row1.empty and not row2.empty and 'milliseconds' in row1.columns and 'milliseconds' in row2.columns:
+                    ms1 = row1.iloc[0].get('milliseconds')
+                    ms2 = row2.iloc[0].get('milliseconds')
+                    if pd.notna(ms1) and pd.notna(ms2):
+                        margin = round(abs(float(ms1) - float(ms2)) / 1000.0, 3)
+            except Exception:
+                margin = None
 
             race_list.append({
                 'round': round_val,
@@ -528,7 +620,7 @@ async def api_head_to_head(driver1_id: int, driver2_id: int, season: Optional[in
                 'driver1_position': pos1,
                 'driver2_position': pos2,
                 'winner': winner,
-                'margin': None
+                'margin': margin
             })
 
         # Build cumulative chart JSON for the two drivers using existing function
@@ -686,7 +778,16 @@ async def get_head_to_head_stats(driver1_id: int, driver2_id: int, season: int):
                 
                 if d1_pos is not None and d2_pos is not None:
                     winner = driver1_info['surname'] if d1_pos < d2_pos else driver2_info['surname']
-                    margin = abs(d1_pos - d2_pos)
+                    # compute seconds behind if milliseconds available
+                    margin = None
+                    try:
+                        if 'milliseconds' in d1_race.columns and 'milliseconds' in d2_race.columns:
+                            ms1 = d1_race.iloc[0].get('milliseconds')
+                            ms2 = d2_race.iloc[0].get('milliseconds')
+                            if pd.notna(ms1) and pd.notna(ms2):
+                                margin = round(abs(float(ms1) - float(ms2)) / 1000.0, 3)
+                    except Exception:
+                        margin = None
                 else:
                     winner = "Both DNF" if d1_pos is None and d2_pos is None else "One DNF"
                     margin = None

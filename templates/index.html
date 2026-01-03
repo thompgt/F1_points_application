@@ -373,6 +373,16 @@
             margin: 1rem 0;
         }
 
+        /* Ensure H2H stats and race-by-race text are white for readability */
+        .h2h-stats-grid, .h2h-stat-card, .race-comparison-table th, .race-comparison-table td, .h2h-record, #h2hRecordSummary, #h2hStatsGrid {
+            color: #ffffff !important;
+        }
+        /* Stats table cells (generated dynamically) */
+        #statsTable .table th, #statsTable .table td {
+            color: #ffffff !important;
+            white-space: nowrap;
+        }
+
         .race-comparison-table {
             background: rgba(40, 40, 40, 0.9);
             border-radius: 10px;
@@ -551,9 +561,9 @@
                                             <i class="fas fa-chart-bar"></i>
                                         </button>
                                     </div>
-                                    <div class="col-md-1">
-                                        <button class="btn btn-secondary" id="openH2HPageBtn" title="Open detailed head-to-head page" disabled>
-                                            <i class="fas fa-external-link-alt"></i>
+                                    <div class="col-md-2">
+                                        <button class="btn btn-outline-primary" id="openH2HPageBtn" title="Open detailed head-to-head page" disabled>
+                                            <i class="fas fa-external-link-alt me-1"></i> Open Detailed H2H Page
                                         </button>
                                     </div>
                                 </div>
@@ -895,7 +905,7 @@
                     <td>${race.driver1_position || 'DNF'}</td>
                     <td>${race.driver2_position || 'DNF'}</td>
                     <td class="${winnerClass}">${race.winner}</td>
-                    <td>${race.margin || 'N/A'}</td>
+                    <td>${(race.margin !== null && race.margin !== undefined) ? (race.margin + 's') : 'N/A'}</td>
                 `;
                 comparisonBody.appendChild(row);
             });
