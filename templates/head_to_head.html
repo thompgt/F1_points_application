@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Head-to-Head Comparison</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+    <style>
+        body { background: #0f0f0f; color: #fff; font-family: Arial, sans-serif; }
+        .container { padding: 2rem; }
+        .card { background: #1f1f1f; border: 1px solid rgba(255,255,255,0.06); }
+        .summary { white-space: pre-wrap; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <a href="/" class="btn btn-outline-light mb-3">&larr; Back</a>
+        <h2 id="pageTitle">Head-to-Head</h2>
+
+        <div class="row mb-3">
+            <div class="col-md-8">
+                <div class="form-check form-switch">
+                    <input class="form-check-input" type="checkbox" id="modeToggle" checked>
+                    <label class="form-check-label" for="modeToggle">Season mode (unchecked = Career)</label>
+                </div>
+            </div>
+            <div class="col-md-4 text-end">
+                <button id="refreshBtn" class="btn btn-primary">Refresh</button>
+            </div>
+        </div>
+
+        <div class="row">
+            <div class="col-lg-4 mb-3">
+                <div class="card p-3" id="statsCard">
+                    <h5>Statistics</h5>
+                    <div id="statsTable"></div>
+                </div>
+                <div class="card p-3 mt-3">
+                    <h5>AI / Wikipedia Summary</h5>
+                    <div id="wikiSummary" class="summary">Loading...</div>
+                </div>
+            </div>
+            <div class="col-lg-8">
+                <div class="card p-3 mb-3">
+                    <h5>Cumulative Points (selected mode)</h5>
+                    <div id="h2hCumulativeChart"></div>
+                </div>
+                <div class="card p-3">
+                    <h5>Race-by-Race</h5>
+                    <div class="table-responsive"><table class="table table-sm table-dark" id="raceTable"><thead><tr><th>Round</th><th>Race</th><th>Driver 1</th><th>Driver 2</th><th>Winner</th><th>Margin</th></tr></thead><tbody></tbody></table></div>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        const params = new URLSearchParams(window.location.search);
+        const driver1 = params.get('driver1');
+        const driver2 = params.get('driver2');
+        const season = params.get('season');
+
+        document.addEventListener('DOMContentLoaded', () => {
+            if (!driver1 || !driver2) {
+                document.getElementById('pageTitle').textContent = 'Head-to-Head (invalid drivers)';
+                return;
+            }
+            // initialize
+            document.getElementById('modeToggle').addEventListener('change', loadAll);
+            document.getElementById('refreshBtn').addEventListener('click', loadAll);
+            loadWikiSummary();
+            loadAll();
+        });
+
+        async function loadAll(){
+            const mode = document.getElementById('modeToggle').checked ? 'season' : 'career';
+            await loadH2H(mode);
+        }
+
+        async function loadH2H(mode){
+            try{
+                const resp = await fetch(`/api/head-to-head?driver1_id=${driver1}&driver2_id=${driver2}&season=${season}&mode=${mode}`);
+                if(!resp.ok) throw new Error('Failed to load');
+                const data = await resp.json();
+                renderStats(data, mode);
+            }catch(e){
+                console.error(e); document.getElementById('statsTable').textContent = 'Error loading data';
+            }
+            // load cumulative chart (use existing calculate endpoint to build chart)
+            try{
+                // call calculate standings endpoint to get cumulative_chart for these two drivers
+                const calcResp = await fetch('/api/calculate-standings', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({season_year: parseInt(season)})});
+                if(calcResp.ok){
+                    const calcData = await calcResp.json();
+                    // the create_cumulative_points_chart supports selected_driver_ids via API? We'll call create_cumulative_points_chart directly by fetching cumulative_chart and then filter on client for two drivers
+                    const cum = JSON.parse(calcData.cumulative_chart);
+                    // Filter traces to only the two drivers
+                    const traces = cum.data.filter(t => t.name && (t.name.includes(data.driver1_stats.driver_name) || t.name.includes(data.driver2_stats.driver_name)));
+                    Plotly.newPlot('h2hCumulativeChart', traces, cum.layout || {});
+                }
+            }catch(e){ console.warn('cumulative chart load failed', e); }
+        }
+
+        function renderStats(data, mode){
+            const statsDiv = document.getElementById('statsTable');
+            const d1 = data.driver1_stats; const d2 = data.driver2_stats;
+            // Build simple table
+            const rows = [
+                ['Metric', d1.driver_name, d2.driver_name],
+                ['Wins', d1.wins, d2.wins],
+                ['Podiums', d1.podiums, d2.podiums],
+                ['Poles', d1.poles, d2.poles],
+                ['Points', d1.total_points, d2.total_points],
+                ['DNFs', d1.dnfs, d2.dnfs],
+                ['Avg Grid', d1.avg_grid || 'N/A', d2.avg_grid || 'N/A'],
+                ['Median Grid', d1.median_grid || 'N/A', d2.median_grid || 'N/A'],
+                ['Avg Grid Gap to Teammate', d1.avg_grid_gap_to_teammate || 'N/A', d2.avg_grid_gap_to_teammate || 'N/A']
+            ];
+            let html = '<table class="table table-sm table-dark mb-0"><tbody>';
+            rows.forEach(r => { html += `<tr><th>${r[0]}</th><td>${r[1]}</td><td>${r[2]}</td></tr>`; });
+            html += '</tbody></table>';
+            statsDiv.innerHTML = html;
+
+            // race table
+            const tbody = document.querySelector('#raceTable tbody'); tbody.innerHTML = '';
+            data.race_by_race.forEach(r => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `<td>${r.round}</td><td>${r.race_name}</td><td>${r.driver1_position||'DNF'}</td><td>${r.driver2_position||'DNF'}</td><td>${r.winner}</td><td>${r.margin||'N/A'}</td>`;
+                tbody.appendChild(tr);
+            });
+        }
+
+        async function loadWikiSummary(){
+            try{
+                const resp = await fetch(`/api/h2h-wikipedia?driver1=${driver1}&driver2=${driver2}&season=${season}`);
+                if(!resp.ok) throw new Error('wiki fetch failed');
+                const data = await resp.json();
+                document.getElementById('wikiSummary').textContent = data.summary || 'No summary available';
+            }catch(e){ document.getElementById('wikiSummary').textContent = 'Could not fetch Wikipedia summary'; }
+        }
+    </script>
+</body>
+</html>

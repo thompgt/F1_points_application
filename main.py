@@ -271,6 +271,12 @@ async def read_root(request: Request):
     """Serve the main page"""
     return templates.TemplateResponse("index.html", {"request": request})
 
+
+@app.get('/head-to-head', response_class=HTMLResponse)
+async def head_to_head(request: Request):
+    """Serve the head-to-head comparison page"""
+    return templates.TemplateResponse('head_to_head.html', {"request": request})
+
 @app.get("/api/seasons")
 async def get_seasons():
     """Get all available seasons"""
@@ -396,6 +402,190 @@ async def get_drivers(season: Optional[int] = None):
         
         df = df.sort_values(by=['surname', 'forename'])
         return {"drivers": df[['driverId', 'forename', 'surname']].to_dict('records')}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get('/api/head-to-head')
+async def api_head_to_head(driver1_id: int, driver2_id: int, season: Optional[int] = None, mode: Optional[str] = 'season'):
+    """Return head-to-head statistics for two drivers. Mode: 'season' or 'career'"""
+    try:
+        results, races, drivers, seasons, constructors, _ = load_data()
+
+        # Merge driver and race info
+        df = results.copy()
+        df = pd.merge(df, drivers[['driverId', 'forename', 'surname']], on='driverId', how='left')
+        race_cols = ['raceId', 'year', 'name']
+        if 'round' in races.columns:
+            race_cols.append('round')
+        df = pd.merge(df, races[race_cols], on='raceId', how='left')
+        df = pd.merge(df, constructors[['constructorId', 'name']].rename(columns={'name': 'constructor_name'}), on='constructorId', how='left')
+
+        # Adjust points (use default modern system)
+        df = adjust_points(df, DEFAULT_POINTS)
+
+        # Filter by mode
+        if mode == 'season' and season is not None:
+            df = df[df['year'] == int(season)].copy()
+
+        # Helper to compute stats for a driver
+        def compute_stats(driver_id):
+            d = df[df['driverId'] == int(driver_id)].copy()
+            name_row = drivers[drivers['driverId'] == int(driver_id)]
+            driver_name = ''
+            if not name_row.empty:
+                driver_name = f"{name_row.iloc[0]['forename']} {name_row.iloc[0]['surname']}"
+
+            wins = int(d[d.get('positionOrder', pd.Series()).fillna(9999) == 1].shape[0])
+            podiums = int(d[d.get('positionOrder', pd.Series()).fillna(9999) <= 3].shape[0])
+            poles = int(d[d.get('grid', pd.Series()) == 1].shape[0]) if 'grid' in d.columns else 0
+            total_points = float(d['adjusted_points'].sum()) if 'adjusted_points' in d.columns else 0.0
+
+            # DNFs: rows where positionOrder is null or positionText indicates retirement
+            dnfs = 0
+            if 'positionOrder' in d.columns:
+                dnfs = int(d['positionOrder'].isna().sum())
+            elif 'positionText' in d.columns:
+                dnfs = int(d['positionText'].isin(['R', 'D', 'DNF']).sum())
+
+            # Grid stats
+            avg_grid = None
+            median_grid = None
+            if 'grid' in d.columns and not d['grid'].dropna().empty:
+                grids = d['grid'].replace(0, pd.NA).dropna().astype(float)
+                if not grids.empty:
+                    avg_grid = float(grids.mean())
+                    median_grid = float(grids.median())
+
+            # Average grid gap to teammate: for races where this driver and at least one teammate (same constructor) also raced
+            avg_grid_gap = None
+            if 'constructorId' in d.columns and 'grid' in d.columns:
+                gaps = []
+                for _, row in d.iterrows():
+                    race_id = row['raceId']
+                    constructor = row.get('constructorId')
+                    if pd.isna(race_id) or pd.isna(constructor):
+                        continue
+                    peers = df[(df['raceId'] == race_id) & (df['constructorId'] == constructor) & (df['driverId'] != driver_id)]
+                    if peers.empty:
+                        continue
+                    # take nearest teammate if more than one
+                    peer = peers.iloc[0]
+                    if pd.isna(row['grid']) or pd.isna(peer.get('grid')):
+                        continue
+                    gaps.append(abs(float(row['grid']) - float(peer['grid'])))
+                if gaps:
+                    avg_grid_gap = float(pd.Series(gaps).mean())
+
+            return {
+                'driver_id': int(driver_id),
+                'driver_name': driver_name,
+                'wins': wins,
+                'podiums': podiums,
+                'poles': poles,
+                'total_points': total_points,
+                'dnfs': dnfs,
+                'avg_grid': avg_grid,
+                'median_grid': median_grid,
+                'avg_grid_gap_to_teammate': avg_grid_gap
+            }
+
+        driver1_stats = compute_stats(driver1_id)
+        driver2_stats = compute_stats(driver2_id)
+
+        # Race-by-race comparison
+        race_list = []
+        # consider races in the filtered df where either driver participated
+        races_of_interest = df[df['driverId'].isin([int(driver1_id), int(driver2_id)])]['raceId'].unique().tolist()
+        for rid in races_of_interest:
+            race_row = races[races['raceId'] == rid]
+            if race_row.empty:
+                continue
+            race_info = race_row.iloc[0]
+            round_val = int(race_info['round']) if 'round' in race_info and not pd.isna(race_info['round']) else None
+            race_name = race_info.get('name', '')
+            row1 = df[(df['raceId'] == rid) & (df['driverId'] == int(driver1_id))]
+            row2 = df[(df['raceId'] == rid) & (df['driverId'] == int(driver2_id))]
+            pos1 = int(row1.iloc[0]['positionOrder']) if not row1.empty and not pd.isna(row1.iloc[0].get('positionOrder')) else None
+            pos2 = int(row2.iloc[0]['positionOrder']) if not row2.empty and not pd.isna(row2.iloc[0].get('positionOrder')) else None
+            # Determine winner if both finished
+            winner = None
+            if pos1 and pos2:
+                if pos1 < pos2:
+                    winner = driver1_stats['driver_name']
+                elif pos2 < pos1:
+                    winner = driver2_stats['driver_name']
+                else:
+                    winner = 'Tie'
+            elif pos1 and not pos2:
+                winner = driver1_stats['driver_name']
+            elif pos2 and not pos1:
+                winner = driver2_stats['driver_name']
+
+            race_list.append({
+                'round': round_val,
+                'race_name': race_name,
+                'driver1_position': pos1,
+                'driver2_position': pos2,
+                'winner': winner,
+                'margin': None
+            })
+
+        # Build cumulative chart JSON for the two drivers using existing function
+        try:
+            # Need adjusted_results_with_races similar to calculate_standings_api
+            adjusted_results = adjust_points(results, DEFAULT_POINTS)
+            adjusted_results_with_drivers = pd.merge(
+                adjusted_results,
+                drivers[['driverId', 'surname', 'forename']],
+                on='driverId'
+            )
+            adjusted_results_with_constructors = pd.merge(
+                adjusted_results_with_drivers,
+                constructors[['constructorId', 'name']].rename(columns={'name': 'constructor_name'}),
+                on='constructorId'
+            )
+            race_cols = ['raceId', 'year', 'name']
+            if 'round' in races.columns:
+                race_cols.append('round')
+            adjusted_results_with_races = pd.merge(
+                adjusted_results_with_constructors,
+                races[race_cols],
+                on='raceId'
+            )
+            cumulative_chart = create_cumulative_points_chart(adjusted_results_with_races, int(season) if season else adjusted_results_with_races['year'].min(), 'Modern', [int(driver1_id), int(driver2_id)])
+        except Exception:
+            cumulative_chart = None
+
+        return {
+            'driver1_stats': driver1_stats,
+            'driver2_stats': driver2_stats,
+            'race_by_race': race_list,
+            'cumulative_chart': cumulative_chart
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get('/api/h2h-wikipedia')
+async def api_h2h_wikipedia(driver1: int, driver2: int, season: Optional[int] = None):
+    """Return a simple assembled summary for two drivers (offline fallback)."""
+    try:
+        _, _, drivers, seasons, _, _ = load_data()
+        def brief(driver_id):
+            row = drivers[drivers['driverId'] == int(driver_id)]
+            if row.empty:
+                return ''
+            r = row.iloc[0]
+            parts = [f"{r.get('forename','')} {r.get('surname','')}."]
+            if 'dob' in r.index and not pd.isna(r['dob']):
+                parts.append(f"Born {r['dob']}")
+            if 'nationality' in r.index and not pd.isna(r['nationality']):
+                parts.append(f"Nationality: {r['nationality']}")
+            return ' '.join(parts)
+
+        summary = f"{brief(driver1)}\n\n{brief(driver2)}\n\nNote: This is an offline summary. For richer summaries, enable external Wikipedia fetch." 
+        return {'summary': summary}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

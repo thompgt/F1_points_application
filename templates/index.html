@@ -551,6 +551,11 @@
                                             <i class="fas fa-chart-bar"></i>
                                         </button>
                                     </div>
+                                    <div class="col-md-1">
+                                        <button class="btn btn-secondary" id="openH2HPageBtn" title="Open detailed head-to-head page" disabled>
+                                            <i class="fas fa-external-link-alt"></i>
+                                        </button>
+                                    </div>
                                 </div>
                                 <div class="form-text mt-2">Select two drivers to compare their season statistics and head-to-head record.</div>
                             </div>
@@ -659,12 +664,33 @@
             // Add change listeners to driver selects
             document.getElementById('driverSelect1').addEventListener('change', function() {
                 checkDriverSelections();
+                updateOpenH2HPageBtn();
             });
 
             document.getElementById('driverSelect2').addEventListener('change', function() {
                 checkDriverSelections();
+                updateOpenH2HPageBtn();
             });
         }
+
+        function updateOpenH2HPageBtn() {
+            const btn = document.getElementById('openH2HPageBtn');
+            const enableH2H = document.getElementById('enableH2H');
+            const d1 = document.getElementById('driverSelect1').value;
+            const d2 = document.getElementById('driverSelect2').value;
+            const season = document.getElementById('seasonSelect').value;
+            btn.disabled = !(enableH2H.checked && d1 && d2 && season);
+        }
+
+        document.getElementById('openH2HPageBtn').addEventListener('click', function() {
+            const d1 = document.getElementById('driverSelect1').value;
+            const d2 = document.getElementById('driverSelect2').value;
+            const season = document.getElementById('seasonSelect').value;
+            if (!d1 || !d2) { showAlert('Select two drivers first', 'warning'); return; }
+            // Open new page with query params
+            const url = `/head-to-head?driver1=${encodeURIComponent(d1)}&driver2=${encodeURIComponent(d2)}&season=${encodeURIComponent(season)}`;
+            window.location.href = url;
+        });
 
         function checkDriverSelections() {
             const enableH2H = document.getElementById('enableH2H');
