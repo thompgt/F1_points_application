@@ -7,8 +7,10 @@ from pydantic import BaseModel
 import pandas as pd
 import plotly.graph_objects as go
 import plotly.express as px
+from plotly.utils import PlotlyJSONEncoder
 from plotly.subplots import make_subplots
 import json
+import plotly.io as pio
 from typing import List, Optional
 import warnings
 from functools import lru_cache
@@ -140,7 +142,23 @@ def create_cumulative_points_chart(adjusted_results_with_races, season_year, poi
         template='plotly_white'
     )
     
-    return fig.to_json()
+    # Build serializable traces (plain Python lists) to avoid binary-packed arrays
+    traces = []
+    for driver_label, grp in season_results_filtered.groupby('driver_label'):
+        x = grp['race_number'].astype(int).tolist()
+        y = grp['cumulative_points'].astype(float).tolist()
+        traces.append({
+            'x': x,
+            'y': y,
+            'mode': 'lines+markers',
+            'name': driver_label,
+            'type': 'scatter',
+            'marker': {'symbol': 'circle'},
+            'line': {'dash': 'solid'}
+        })
+
+    layout = fig.to_dict().get('layout', {})
+    return json.dumps({'data': traces, 'layout': layout}, cls=PlotlyJSONEncoder)
 
 def create_points_distribution_chart(standings, season_year, points_system_name):
     """Create a points distribution chart showing top drivers' total points"""
@@ -173,7 +191,17 @@ def create_points_distribution_chart(standings, season_year, points_system_name)
         template='plotly_white'
     )
     
-    return fig.to_json()
+    # Build serializable bar trace and layout
+    x = top_standings['driver_name'].tolist()
+    y = top_standings['adjusted_points'].astype(float).tolist()
+    traces = [{
+        'x': x,
+        'y': y,
+        'type': 'bar',
+        'text': y
+    }]
+    layout = fig.to_dict().get('layout', {})
+    return json.dumps({'data': traces, 'layout': layout}, cls=PlotlyJSONEncoder)
 
 def create_constructors_cumulative_chart(adjusted_results_with_races, season_year, points_system_name):
     """Create constructors cumulative points chart over the season."""
@@ -220,7 +248,23 @@ def create_constructors_cumulative_chart(adjusted_results_with_races, season_yea
         yaxis_title='Cumulative Points',
         template='plotly_white'
     )
-    return fig.to_json()
+    # Build serializable traces for constructors cumulative chart
+    traces = []
+    for constructor_name, grp in constructor_filtered.groupby('constructor_name'):
+        x = grp['race_number'].astype(int).tolist()
+        y = grp['cumulative_points'].astype(float).tolist()
+        traces.append({
+            'x': x,
+            'y': y,
+            'mode': 'lines+markers',
+            'name': constructor_name,
+            'type': 'scatter',
+            'marker': {'symbol': 'circle'},
+            'line': {'dash': 'solid'}
+        })
+
+    layout = fig.to_dict().get('layout', {})
+    return json.dumps({'data': traces, 'layout': layout}, cls=PlotlyJSONEncoder)
 
 @app.get("/", response_class=HTMLResponse)
 async def read_root(request: Request):
