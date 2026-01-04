@@ -1,0 +1,46 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Race Detail</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+  <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+  <style>body{background:#0f0f0f;color:#fff}.card{background:#1f1f1f}</style>
+</head>
+<body>
+  <div class="container py-4">
+    <a href="/head-to-head" class="btn btn-outline-light mb-3">&larr; Back</a>
+    <div id="raceInfo"></div>
+    <div id="charts"></div>
+  </div>
+
+  <script>
+    const params = new URLSearchParams(window.location.search);
+    const raceId = params.get('race');
+    if(!raceId){ document.getElementById('raceInfo').innerText = 'No race id'; }
+    async function load(){
+      const resp = await fetch(`/api/race/${raceId}`);
+      if(!resp.ok){ document.getElementById('raceInfo').innerText = 'Failed to load race'; return; }
+      const data = await resp.json();
+      document.getElementById('raceInfo').innerHTML = `<h3>${data.name} (Round ${data.round})</h3><p>${data.date||''}</p>`;
+      // Drivers table
+      const tbl = document.createElement('div'); tbl.className='card p-3 mt-3';
+      let html = '<h5>Race Results</h5><div class="table-responsive"><table class="table table-dark table-sm"><thead><tr><th>Pos</th><th>Driver</th><th>Constructor</th><th>Grid</th><th>Laps</th><th>Time(s)</th></tr></thead><tbody>';
+      data.results.forEach(r => { html += `<tr><td>${r.positionOrder||'DNF'}</td><td>${r.forename} ${r.surname}</td><td>${r.constructor_name||''}</td><td>${r.grid||''}</td><td>${r.laps||''}</td><td>${r.time_seconds? r.time_seconds+'s':''}</td></tr>`; });
+      html += '</tbody></table></div>';
+      tbl.innerHTML = html; document.getElementById('charts').appendChild(tbl);
+
+      // Simple chart: finishing times
+      const finished = data.results.filter(r=>r.time_seconds);
+      if(finished.length){
+        const trace = { x: finished.map(r=>r.forename+' '+r.surname), y: finished.map(r=>r.time_seconds), type:'bar' };
+        const div = document.createElement('div'); div.className='card p-3 mt-3'; div.innerHTML='<h5>Finishing Times</h5><div id="timeChart"></div>';
+        document.getElementById('charts').appendChild(div);
+        Plotly.newPlot('timeChart',[trace],{template:'plotly_dark',height:400});
+      }
+    }
+    load();
+  </script>
+</body>
+</html>

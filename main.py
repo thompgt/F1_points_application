@@ -1,4 +1,5 @@
 from fastapi import FastAPI, HTTPException
+from fastapi import Depends
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import HTMLResponse, FileResponse
@@ -23,6 +24,28 @@ from functools import lru_cache
 import os
 from dotenv import load_dotenv
 from season_simulator import simulate_season
+from db import init_db, HeadToHeadCache, SessionLocal
+import sqlalchemy
+import os
+
+# Optional Redis
+try:
+    import redis
+    REDIS_AVAILABLE = True
+except Exception:
+    REDIS_AVAILABLE = False
+
+# initialize DB
+init_db()
+
+REDIS_CLIENT = None
+if REDIS_AVAILABLE:
+    redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379/0')
+    try:
+        REDIS_CLIENT = redis.Redis.from_url(redis_url, decode_responses=True)
+        REDIS_CLIENT.ping()
+    except Exception:
+        REDIS_CLIENT = None
 
 # Load environment variables
 load_dotenv()
@@ -295,6 +318,11 @@ async def head_to_head(request: Request):
     """Serve the head-to-head comparison page"""
     return templates.TemplateResponse('head_to_head.html', {"request": request})
 
+
+@app.get('/race-detail', response_class=HTMLResponse)
+async def race_detail(request: Request):
+    return templates.TemplateResponse('race_detail.html', {"request": request})
+
 @app.get("/api/seasons")
 async def get_seasons():
     """Get all available seasons"""
@@ -445,6 +473,24 @@ async def api_head_to_head(driver1_id: int, driver2_id: int, season: Optional[in
         # Filter by mode
         if mode == 'season' and season is not None:
             df = df[df['year'] == int(season)].copy()
+
+        # Try cache (Redis first, then SQLite)
+        cache_key = f"h2h:{driver1_id}:{driver2_id}:{season}:{mode}"
+        if REDIS_CLIENT:
+            cached = REDIS_CLIENT.get(cache_key)
+            if cached:
+                try:
+                    return json.loads(cached)
+                except Exception:
+                    pass
+        # Try sqlite cache
+        try:
+            db = SessionLocal()
+            q = db.query(HeadToHeadCache).filter_by(driver1_id=driver1_id, driver2_id=driver2_id, season=season, mode=mode).order_by(HeadToHeadCache.created_at.desc()).first()
+            if q and q.response_json:
+                return json.loads(q.response_json)
+        except Exception:
+            pass
 
         # Helper to compute stats for a driver
         def compute_stats(driver_id):
@@ -649,12 +695,33 @@ async def api_head_to_head(driver1_id: int, driver2_id: int, season: Optional[in
         except Exception:
             cumulative_chart = None
 
-        return {
+        response = {
             'driver1_stats': driver1_stats,
             'driver2_stats': driver2_stats,
             'race_by_race': race_list,
             'cumulative_chart': cumulative_chart
         }
+
+        # Save to caches
+        try:
+            serialized = json.dumps(response)
+            if REDIS_CLIENT:
+                try:
+                    REDIS_CLIENT.set(cache_key, serialized, ex=60*60)
+                except Exception:
+                    pass
+            try:
+                db = SessionLocal()
+                entry = HeadToHeadCache(driver1_id=driver1_id, driver2_id=driver2_id, season=season, mode=mode, response_json=serialized)
+                db.add(entry)
+                db.commit()
+                db.close()
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+        return response
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -678,6 +745,48 @@ async def api_h2h_wikipedia(driver1: int, driver2: int, season: Optional[int] = 
 
         summary = f"{brief(driver1)}\n\n{brief(driver2)}\n\nNote: This is an offline summary. For richer summaries, enable external Wikipedia fetch." 
         return {'summary': summary}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get('/api/race/{race_id}')
+async def api_race_detail(race_id: int):
+    try:
+        results, races, drivers, _, constructors, _ = load_data()
+        race_row = races[races['raceId'] == race_id]
+        if race_row.empty:
+            raise HTTPException(status_code=404, detail='Race not found')
+        race = race_row.iloc[0].to_dict()
+        race_results = results[results['raceId'] == race_id].copy()
+        # merge driver and constructor info
+        race_results = pd.merge(race_results, drivers[['driverId','forename','surname']], on='driverId', how='left')
+        race_results = pd.merge(race_results, constructors[['constructorId','name']].rename(columns={'name':'constructor_name'}), on='constructorId', how='left')
+        # compute time in seconds if milliseconds present
+        def time_seconds(row):
+            try:
+                ms = row.get('milliseconds')
+                if pd.notna(ms):
+                    return round(float(ms)/1000.0,3)
+            except Exception:
+                pass
+            return None
+
+        rows = []
+        for _, r in race_results.sort_values('positionOrder').iterrows():
+            rows.append({
+                'driverId': int(r['driverId']),
+                'forename': r.get('forename'),
+                'surname': r.get('surname'),
+                'constructor_name': r.get('constructor_name'),
+                'positionOrder': int(r['positionOrder']) if pd.notna(r.get('positionOrder')) else None,
+                'grid': int(r['grid']) if pd.notna(r.get('grid')) else None,
+                'laps': int(r['laps']) if pd.notna(r.get('laps')) else None,
+                'time_seconds': time_seconds(r)
+            })
+
+        return {'raceId': int(race_id), 'name': race.get('name'), 'round': race.get('round'), 'date': race.get('date'), 'results': rows}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
