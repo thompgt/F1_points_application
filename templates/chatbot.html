@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>F1 Data Chatbot</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <nav>
+        <ul>
+            <li><a href="/">Home</a></li>
+            <li><a href="/stats">Stats</a></li>
+            <li><a href="/adjusted-points">Adjusted Points</a></li>
+            <li><a href="/chatbot">Chatbot</a></li>
+        </ul>
+    </nav>
+    <div class="container">
+        <h2>F1 Data Chatbot</h2>
+        <div id="chat-window">
+            <!-- Chat messages will appear here -->
+        </div>
+        <form id="chat-form" method="post" action="/chatbot">
+            <input type="text" name="user_query" id="user_query" placeholder="Ask me anything about F1 data..." required>
+            <button type="submit"><i class="fas fa-paper-plane"></i> Send</button>
+        </form>
+    </div>
+    <script>
+        // Basic client-side chat UX (optional, can be improved)
+        document.getElementById('chat-form').onsubmit = function(e) {
+            e.preventDefault();
+            var query = document.getElementById('user_query').value;
+            fetch('/chatbot', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: 'user_query=' + encodeURIComponent(query)
+            })
+            .then(response => response.text())
+            .then(answer => {
+                var chatWindow = document.getElementById('chat-window');
+                chatWindow.innerHTML += '<div class="user-msg">' + query + '</div>';
+                chatWindow.innerHTML += '<div class="bot-msg">' + answer + '</div>';
+                document.getElementById('user_query').value = '';
+                chatWindow.scrollTop = chatWindow.scrollHeight;
+            });
+        };
+    </script>
+</body>
+</html>

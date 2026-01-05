@@ -186,17 +186,21 @@
             border-radius: 15px;
             overflow: hidden;
             box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
-            border: 1px solid rgba(225, 6, 0, 0.1);
+            border: 1px solid #444;
+            font-size: 1.2rem;
+            font-family: 'Segoe UI', Arial, Helvetica, sans-serif;
+            color: #222;
         }
 
         .standings-table th {
             background: linear-gradient(45deg, var(--f1-red), #ff4444) !important;
             color: white !important;
             border: none;
-            padding: 1rem;
-            font-weight: 600;
+            padding: 1.2rem;
+            font-weight: 700;
             text-transform: uppercase;
-            letter-spacing: 1px;
+            letter-spacing: 0.07em;
+            font-size: 1.3rem;
         }
 
         .standings-table td {
@@ -516,8 +520,14 @@
                         <div id="results" style="display: none;">
                             <!-- Standings Table -->
                             <div class="standings-table">
-                                <h3 class="p-3 mb-0"><i class="fas fa-list-ol"></i> Driver Standings</h3>
-                                <div class="table-responsive">
+                                <div class="d-flex justify-content-between align-items-center">
+                                    <h3 class="p-3 mb-0" style="color: #fff;"><i class="fas fa-list-ol"></i> <span id="standingsTitle">Driver Standings</span></h3>
+                                    <div>
+                                        <button id="showDriversBtn" class="btn btn-outline-light btn-sm me-2" onclick="showDrivers()">Drivers</button>
+                                        <button id="showConstructorsBtn" class="btn btn-outline-light btn-sm" onclick="showConstructors()">Constructors</button>
+                                    </div>
+                                </div>
+                                <div class="table-responsive" id="driversTableSection">
                                     <table class="table table-hover mb-0">
                                         <thead>
                                             <tr>
@@ -528,6 +538,19 @@
                                             </tr>
                                         </thead>
                                         <tbody id="standingsTableBody">
+                                        </tbody>
+                                    </table>
+                                </div>
+                                <div class="table-responsive" id="constructorsTableSection" style="display:none;">
+                                    <table class="table table-hover mb-0">
+                                        <thead>
+                                            <tr>
+                                                <th>Position</th>
+                                                <th>Constructor</th>
+                                                <th>Points</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="constructorsTableBody">
                                         </tbody>
                                     </table>
                                 </div>
@@ -603,7 +626,34 @@
                             </div>
 
                             <!-- Charts -->
+                            <div class="chart-container">
+                                <h4><i class="fas fa-flag-checkered"></i> Race Results</h4>
+                                <div class="mb-3">
+                                    <label for="raceSelect" class="form-label">Select Race:</label>
+                                    <select id="raceSelect" class="form-select" onchange="loadRaceResults()"></select>
+                                </div>
+                                <div class="table-responsive">
+                                    <table class="table table-hover mb-0">
+                                        <thead>
+                                            <tr>
+                                                <th>Position</th>
+                                                <th>Driver</th>
+                                                <th>Constructor</th>
+                                                <th>Points</th>
+                                                <th>Final Time</th>
+                                                <th>Grid</th>
+                                                <th>Status</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="raceResultsTableBody"></tbody>
+                                    </table>
+                                </div>
+                            </div>
                             <div class="mt-4">
+                                <div class="chart-container">
+                                    <h4><i class="fas fa-trophy"></i> Title Fight</h4>
+                                    <div id="titleFightChart"></div>
+                                </div>
                                 <div class="chart-container">
                                     <h4><i class="fas fa-chart-line"></i> Cumulative Points</h4>
                                     <div id="cumulativeChart"></div>
@@ -616,6 +666,12 @@
                                     <h4><i class="fas fa-industry"></i> Constructors Cumulative Points</h4>
                                     <div id="constructorsCumulativeChart"></div>
                                 </div>
+                            </div>
+
+                            <!-- Race Results Timeline Chart -->
+                            <div class="chart-container">
+                                <h4><i class="fas fa-clock"></i> Race Results Timeline</h4>
+                                <div id="raceResultsTimelineChart"></div>
                             </div>
                         </div>
                     </div>
@@ -640,6 +696,7 @@
                 const selectedSeason = this.value;
                 document.getElementById('currentSeason').textContent = selectedSeason || 'No season selected';
                 await loadDriversForSeason(selectedSeason);
+                loadRaceDropdown();
             });
 
             document.getElementById('pointsSystemSelect').addEventListener('change', function() {
@@ -723,7 +780,8 @@
             // Clear existing options
             select1.innerHTML = '<option value="">Select a driver...</option>';
             select2.innerHTML = '<option value="">Select a driver...</option>';
-
+                console.log(`Loaded ${data.drivers.length} drivers for season ${season}`);
+                await loadRacesForSeason(season);
             if (!season) {
                 select1.disabled = true;
                 select2.disabled = true;
@@ -773,23 +831,25 @@
             const d1 = document.getElementById('driverSelect1').value;
             const d2 = document.getElementById('driverSelect2').value;
             const season = document.getElementById('seasonSelect').value;
-            
+            const btnText = document.getElementById('h2hBtnText');
+            btnText.textContent = 'Loading...';
             if (!d1 || !d2) {
                 showAlert('Please select both drivers for head-to-head comparison', 'warning');
+                btnText.textContent = 'Compare';
                 return;
             }
-
             try {
                 const response = await fetch(`/api/head-to-head?driver1_id=${d1}&driver2_id=${d2}&season=${season}`);
                 if (!response.ok) {
                     throw new Error(`HTTP error! status: ${response.status}`);
                 }
-                
                 const data = await response.json();
                 displayHeadToHeadResults(data);
             } catch (error) {
                 console.error('Error loading head-to-head stats:', error);
                 showAlert('Error loading head-to-head statistics: ' + error.message, 'danger');
+            } finally {
+                btnText.textContent = 'Compare';
             }
         }
 
@@ -800,6 +860,13 @@
             const driver1Name = data.driver1_stats.driver_name;
             const driver2Name = data.driver2_stats.driver_name;
             
+            if (!data || !data.head_to_head_record) {
+                recordSummary.innerHTML = `<div class='alert alert-warning'>No head-to-head data available for these drivers in this season.</div>`;
+                document.getElementById('h2hStatsGrid').innerHTML = '';
+                document.getElementById('raceComparisonBody').innerHTML = '';
+                document.getElementById('h2hResults').style.display = 'block';
+                return;
+            }
             recordSummary.innerHTML = `
                 <h4><i class="fas fa-trophy"></i> Head-to-Head Record</h4>
                 <div class="h2h-score">
@@ -935,11 +1002,113 @@
                     option.textContent = season;
                     select.appendChild(option);
                 });
-            } catch (error) {
+                } catch (error) {
                 console.error('Error loading seasons:', error);
                 showAlert('Error loading seasons', 'danger');
             }
+
+                const defaultSeason = select.options[1]?.value;
+                if (defaultSeason) {
+                    await loadRacesForSeason(defaultSeason);
+                }
         }
+
+            async function loadRacesForSeason(season) {
+                const raceSelect = document.getElementById('raceSelect');
+                raceSelect.innerHTML = '<option value="">Loading races...</option>';
+                if (!season) {
+                    raceSelect.innerHTML = '<option value="">Select a race...</option>';
+                    return;
+                }
+                try {
+                    const resp = await fetch(`/api/races?season=${season}`);
+                    if (!resp.ok) throw new Error(`HTTP error! status: ${resp.status}`);
+                    const data = await resp.json();
+                    raceSelect.innerHTML = '';
+                    data.races.forEach((race, idx) => {
+                        const opt = document.createElement('option');
+                        opt.value = race.raceId;
+                        opt.textContent = `${race.round}. ${race.name}`;
+                        raceSelect.appendChild(opt);
+                    });
+                    if (data.races.length > 0) {
+                        raceSelect.value = data.races[0].raceId;
+                        await loadRaceResults();
+                    }
+                } catch (e) {
+                    console.error('Error loading races:', e);
+                    raceSelect.innerHTML = '<option value="">Error loading races</option>';
+                }
+            }
+
+            async function loadRaceDropdown() {
+                const season = document.getElementById('seasonSelect').value;
+                const raceSelect = document.getElementById('raceSelect');
+                raceSelect.innerHTML = '<option value="">Loading races...</option>';
+                if (!season) {
+                    raceSelect.innerHTML = '<option value="">Select a season first</option>';
+                    return;
+                }
+                try {
+                    const resp = await fetch(`/api/races?season=${season}`);
+                    if (!resp.ok) throw new Error(`HTTP error! status: ${resp.status}`);
+                    const data = await resp.json();
+                    raceSelect.innerHTML = '';
+                    data.races.forEach((race, idx) => {
+                        const opt = document.createElement('option');
+                        opt.value = race.round || race.raceId;
+                        opt.textContent = `${race.round ? 'Round ' + race.round : 'Race ' + race.raceId}: ${race.name}`;
+                        raceSelect.appendChild(opt);
+                    });
+                    // Default to first race
+                    if (data.races.length > 0) {
+                        raceSelect.value = data.races[0].round || data.races[0].raceId;
+                        loadRaceResults();
+                    }
+                } catch (e) {
+                    raceSelect.innerHTML = '<option value="">Error loading races</option>';
+                    showAlert('Error loading races for the selected season', 'danger');
+                }
+            }
+
+            async function loadRaceResults() {
+                const season = document.getElementById('seasonSelect').value;
+                const raceSelect = document.getElementById('raceSelect');
+                const raceNumber = raceSelect.value;
+                const tableBody = document.getElementById('raceResultsTableBody');
+                tableBody.innerHTML = '<tr><td colspan="7">Loading...</td></tr>';
+                if (!season || !raceNumber) {
+                    tableBody.innerHTML = '<tr><td colspan="7">Select season and race</td></tr>';
+                    return;
+                }
+                try {
+                    const resp = await fetch('/api/race-results', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ season_year: parseInt(season), race_number: parseInt(raceNumber) })
+                    });
+                    if (!resp.ok) throw new Error(`HTTP error! status: ${resp.status}`);
+                    const data = await resp.json();
+                    tableBody.innerHTML = '';
+                    data.results.forEach((result, idx) => {
+                        const row = document.createElement('tr');
+                        const positionClass = idx < 3 ? `position-${idx + 1}` : '';
+                        row.innerHTML = `
+                            <td class="${positionClass}"><strong>${result.position ?? ''}</strong></td>
+                            <td>${result.driver}</td>
+                            <td>${result.constructor}</td>
+                            <td>${result.points}</td>
+                            <td>${result.final_time ?? ''}</td>
+                            <td>${result.grid ?? ''}</td>
+                            <td>${result.status ?? ''}</td>
+                        `;
+                        tableBody.appendChild(row);
+                    });
+                } catch (e) {
+                    tableBody.innerHTML = '<tr><td colspan="7">Error loading race results</td></tr>';
+                    showAlert('Error loading race results', 'danger');
+                }
+            }
 
         async function calculateStandings() {
             const season = document.getElementById('seasonSelect').value;
@@ -1002,14 +1171,17 @@
         }
 
         function displayResults(data) {
-            // Display standings table
+            // Display race results timeline chart
+            if (data.race_results_timeline_chart) {
+                const timelineData = JSON.parse(data.race_results_timeline_chart);
+                Plotly.newPlot('raceResultsTimelineChart', timelineData.data, timelineData.layout);
+            }
+            // Display driver standings table
             const tbody = document.getElementById('standingsTableBody');
             tbody.innerHTML = '';
-            
             data.standings.forEach((driver, index) => {
                 const row = document.createElement('tr');
                 const positionClass = index < 3 ? `position-${index + 1}` : '';
-                
                 row.innerHTML = `
                     <td class="${positionClass}"><strong>${driver.Position}</strong></td>
                     <td>${driver.forename} ${driver.surname}</td>
@@ -1019,7 +1191,39 @@
                 tbody.appendChild(row);
             });
 
+            // Display constructors standings table
+            const ctbody = document.getElementById('constructorsTableBody');
+            ctbody.innerHTML = '';
+            // Aggregate points by constructor
+            const constructorMap = {};
+            data.standings.forEach((driver) => {
+                if (!driver.constructor_name) return;
+                if (!constructorMap[driver.constructor_name]) {
+                    constructorMap[driver.constructor_name] = 0;
+                }
+                constructorMap[driver.constructor_name] += driver.adjusted_points;
+            });
+            // Convert to array and sort
+            const constructorsArr = Object.entries(constructorMap)
+                .map(([name, points]) => ({ name, points }))
+                .sort((a, b) => b.points - a.points);
+            constructorsArr.forEach((constructor, idx) => {
+                const row = document.createElement('tr');
+                const positionClass = idx < 3 ? `position-${idx + 1}` : '';
+                row.innerHTML = `
+                    <td class="${positionClass}"><strong>${idx + 1}</strong></td>
+                    <td>${constructor.name}</td>
+                    <td><strong>${constructor.points}</strong></td>
+                `;
+                ctbody.appendChild(row);
+            });
+
             // Display charts
+            if (data.title_fight_chart) {
+                const titleFightData = JSON.parse(data.title_fight_chart);
+                Plotly.newPlot('titleFightChart', titleFightData.data, titleFightData.layout);
+            }
+
             if (data.cumulative_chart) {
                 const cumulativeData = JSON.parse(data.cumulative_chart);
                 Plotly.newPlot('cumulativeChart', cumulativeData.data, cumulativeData.layout);
@@ -1037,6 +1241,25 @@
 
             // Show results section
             document.getElementById('results').style.display = 'block';
+            // Default to drivers table
+            showDrivers();
+
+        }
+
+        function showDrivers() {
+            document.getElementById('driversTableSection').style.display = '';
+            document.getElementById('constructorsTableSection').style.display = 'none';
+            document.getElementById('standingsTitle').textContent = 'Driver Standings';
+            document.getElementById('showDriversBtn').classList.add('active');
+            document.getElementById('showConstructorsBtn').classList.remove('active');
+        }
+
+        function showConstructors() {
+            document.getElementById('driversTableSection').style.display = 'none';
+            document.getElementById('constructorsTableSection').style.display = '';
+            document.getElementById('standingsTitle').textContent = 'Constructor Standings';
+            document.getElementById('showDriversBtn').classList.remove('active');
+            document.getElementById('showConstructorsBtn').classList.add('active');
             
             // Scroll to results
             document.getElementById('results').scrollIntoView({ behavior: 'smooth' });
