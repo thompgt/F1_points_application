@@ -14,13 +14,36 @@ chroma/
 
 # Virtual environment
 venv/
+.venv/
 env/
 ENV/
 
 # IDE
 .vscode/
 .idea/
+*.code-workspace
 
 # OS
 .DS_Store
 Thumbs.db
+
+# Database files (local development)
+*.db
+*.sqlite
+*.sqlite3
+cache.db
+database.db
+
+# Logs
+*.log
+logs/
+
+# Test/Coverage
+.coverage
+.pytest_cache/
+htmlcov/
+
+# Build
+dist/
+build/
+*.egg-info/

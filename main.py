@@ -1,10 +1,10 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi import Depends
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import HTMLResponse, FileResponse
 from fastapi.requests import Request
-from pydantic import BaseModel
+from fastapi.middleware.cors import CORSMiddleware
 import pandas as pd
 import plotly.graph_objects as go
 import plotly.express as px
@@ -26,7 +26,18 @@ from dotenv import load_dotenv
 from season_simulator import simulate_season
 from db import init_db, HeadToHeadCache, SessionLocal
 import sqlalchemy
-import os
+
+# Import new modules for validation, middleware, and health checks
+from validators import (
+    StandingsRequest,
+    SimulateSeasonRequest,
+    RaceResultsRequest,
+    HeadToHeadRequest,
+    sanitize_string,
+    InputValidator
+)
+from middleware import add_middleware_stack, get_logger
+from health import router as health_router
 
 # Optional Redis
 try:
@@ -52,24 +63,50 @@ load_dotenv()
 
 warnings.filterwarnings("ignore")
 
-app = FastAPI(title="F1 Points Calculator", version="1.0.0")
+# Get logger instance
+logger = get_logger()
+
+# App configuration
+API_VERSION = os.getenv("API_VERSION", "1.0.0")
+ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
+ENABLE_RATE_LIMITING = os.getenv("ENABLE_RATE_LIMITING", "true").lower() == "true"
+CORS_ORIGINS = os.getenv("CORS_ORIGINS", "*").split(",")
+
+app = FastAPI(
+    title="F1 Points Calculator",
+    description="Advanced Racing Analytics & Head-to-Head Comparisons API",
+    version=API_VERSION,
+    docs_url="/api/docs",
+    redoc_url="/api/redoc",
+    openapi_url="/api/openapi.json"
+)
+
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=CORS_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
+    allow_headers=["*"],
+)
+
+# Add custom middleware stack (error handling, logging, rate limiting, security)
+add_middleware_stack(app, {
+    'enable_rate_limiting': ENABLE_RATE_LIMITING,
+    'requests_per_minute': int(os.getenv('RATE_LIMIT_PER_MINUTE', '60')),
+    'requests_per_hour': int(os.getenv('RATE_LIMIT_PER_HOUR', '1000')),
+    'burst_limit': int(os.getenv('RATE_LIMIT_BURST', '10'))
+})
+
+# Include health check routes
+app.include_router(health_router)
 
 # Mount static files and templates
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 DEFAULT_POINTS = [25, 18, 15, 12, 10, 8, 6, 4, 2, 1]
 
-
-
-class StandingsRequest(BaseModel):
-    season_year: int
-    points_system: Optional[List[int]] = None
-    selected_driver_ids: Optional[List[int]] = None
-
-class SimulateSeasonRequest(BaseModel):
-    season_year: int
-    points_system: Optional[List[int]] = None
-    gemini_api_key: Optional[str] = None
+# Note: Request models (StandingsRequest, SimulateSeasonRequest, etc.) are now in validators.py
 
 @lru_cache(maxsize=1)
 def load_data():
@@ -351,6 +388,82 @@ def create_constructors_cumulative_chart(adjusted_results_with_races, season_yea
     layout = fig.to_dict().get('layout', {})
     return json.dumps({'data': traces, 'layout': layout}, cls=PlotlyJSONEncoder)
 
+
+def create_race_results_timeline_chart(adjusted_results_with_races, season_year, selected_driver_ids: Optional[List[int]] = None):
+    """Create a race results timeline chart showing finishing positions across the season."""
+    season_results = adjusted_results_with_races[adjusted_results_with_races['year'] == season_year].copy()
+    
+    if season_results.empty:
+        return None
+    
+    # Use 'round' column if available
+    if 'round' in season_results.columns:
+        season_results['race_number'] = season_results['round']
+    else:
+        race_order = season_results[['raceId']].drop_duplicates().sort_values('raceId').reset_index(drop=True)
+        race_order['race_number'] = race_order.index + 1
+        season_results = pd.merge(season_results, race_order, on='raceId')
+    
+    # Create driver label
+    season_results['driver_label'] = season_results['forename'] + ' ' + season_results['surname']
+    
+    # Filter by selected drivers or get top 10
+    if selected_driver_ids:
+        season_results = season_results[season_results['driverId'].isin(selected_driver_ids)]
+    else:
+        # Get top 10 by total points
+        driver_totals = (
+            season_results.groupby('driverId')['adjusted_points']
+            .sum()
+            .sort_values(ascending=False)
+            .head(10)
+        )
+        season_results = season_results[season_results['driverId'].isin(driver_totals.index)]
+    
+    # Sort by race number and position
+    season_results = season_results.sort_values(['driver_label', 'race_number'])
+    
+    # Create line chart with positions (inverted Y-axis so 1st place is at top)
+    fig = px.line(
+        season_results,
+        x='race_number',
+        y='positionOrder',
+        color='driver_label',
+        title=f'Race Results Timeline - {season_year} Season',
+        labels={'race_number': 'Race Number', 'positionOrder': 'Finishing Position', 'driver_label': 'Driver'},
+        markers=True
+    )
+    
+    fig.update_layout(
+        height=500,
+        yaxis=dict(autorange='reversed'),  # Invert so P1 is at top
+        showlegend=True,
+        legend=dict(orientation="v", yanchor="top", y=1, xanchor="left", x=1.02),
+        xaxis_title='Race Number',
+        yaxis_title='Finishing Position',
+        template='plotly_white'
+    )
+    
+    # Build serializable traces
+    traces = []
+    for driver_label in season_results['driver_label'].unique():
+        grp = season_results[season_results['driver_label'] == driver_label]
+        x = grp['race_number'].astype(int).tolist()
+        y = grp['positionOrder'].fillna(20).astype(int).tolist()  # Use 20 for DNF
+        traces.append({
+            'x': x,
+            'y': y,
+            'mode': 'lines+markers',
+            'name': driver_label,
+            'type': 'scatter',
+            'marker': {'symbol': 'circle'},
+            'line': {'dash': 'solid'}
+        })
+    
+    layout = fig.to_dict().get('layout', {})
+    return json.dumps({'data': traces, 'layout': layout}, cls=PlotlyJSONEncoder)
+
+
 @app.get("/", response_class=HTMLResponse)
 async def read_root(request: Request):
     """Serve the main page"""
@@ -474,8 +587,114 @@ async def get_points_systems():
         }
     }
 
+@app.get("/api/races")
+async def get_races(
+    season: int = Query(..., ge=1950, le=2030, description="Season year to get races for")
+):
+    """Get all races for a specific season."""
+    try:
+        _, races, _, _, _, _ = load_data()
+        season_races = races[races['year'] == season].copy()
+        
+        if season_races.empty:
+            return {"races": []}
+        
+        # Sort by round if available
+        if 'round' in season_races.columns:
+            season_races = season_races.sort_values('round')
+        
+        race_list = []
+        for _, race in season_races.iterrows():
+            race_list.append({
+                "raceId": int(race['raceId']),
+                "name": race.get('name', ''),
+                "round": int(race['round']) if 'round' in race and pd.notna(race['round']) else None,
+                "date": str(race.get('date', '')) if pd.notna(race.get('date')) else None,
+                "circuitId": int(race['circuitId']) if 'circuitId' in race and pd.notna(race['circuitId']) else None
+            })
+        
+        return {"races": race_list}
+    except Exception as e:
+        logger.error(f"Error loading races: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/race-results")
+async def get_race_results(request: RaceResultsRequest):
+    """Get detailed results for a specific race."""
+    try:
+        results, races, drivers, _, constructors, _ = load_data()
+        
+        # Find the race by season and round number
+        season_races = races[races['year'] == request.season_year]
+        if season_races.empty:
+            raise HTTPException(status_code=404, detail=f"No races found for season {request.season_year}")
+        
+        # Find race by round number
+        race = season_races[season_races['round'] == request.race_number]
+        if race.empty:
+            raise HTTPException(status_code=404, detail=f"Race {request.race_number} not found in season {request.season_year}")
+        
+        race_id = int(race.iloc[0]['raceId'])
+        race_results = results[results['raceId'] == race_id].copy()
+        
+        if race_results.empty:
+            return {"results": [], "race_name": race.iloc[0].get('name', ''), "round": request.race_number}
+        
+        # Merge with driver and constructor info
+        race_results = pd.merge(
+            race_results,
+            drivers[['driverId', 'forename', 'surname']],
+            on='driverId',
+            how='left'
+        )
+        race_results = pd.merge(
+            race_results,
+            constructors[['constructorId', 'name']].rename(columns={'name': 'constructor'}),
+            on='constructorId',
+            how='left'
+        )
+        
+        # Sort by position
+        race_results = race_results.sort_values('positionOrder')
+        
+        result_list = []
+        for _, row in race_results.iterrows():
+            # Format time
+            final_time = None
+            if 'time' in row and pd.notna(row['time']):
+                final_time = row['time']
+            elif 'milliseconds' in row and pd.notna(row['milliseconds']):
+                ms = float(row['milliseconds'])
+                final_time = f"{ms/1000:.3f}s"
+            
+            result_list.append({
+                "position": int(row['positionOrder']) if pd.notna(row.get('positionOrder')) else None,
+                "driver": f"{row.get('forename', '')} {row.get('surname', '')}",
+                "constructor": row.get('constructor', ''),
+                "points": float(row.get('points', 0)),
+                "grid": int(row['grid']) if pd.notna(row.get('grid')) else None,
+                "final_time": final_time,
+                "status": row.get('status', '') if pd.notna(row.get('status')) else None,
+                "laps": int(row['laps']) if pd.notna(row.get('laps')) else None
+            })
+        
+        return {
+            "results": result_list,
+            "race_name": race.iloc[0].get('name', ''),
+            "round": request.race_number
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error loading race results: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/drivers")
-async def get_drivers(season: Optional[int] = None):
+async def get_drivers(
+    season: Optional[int] = Query(default=None, ge=1950, le=2030, description="Filter by season")
+):
     """Get drivers list, optionally for a specific season."""
     try:
         results, races, drivers, _, _, _ = load_data()
@@ -846,6 +1065,9 @@ async def get_head_to_head_stats(driver1_id: int, driver2_id: int, season: int):
         if season_races.empty:
             raise HTTPException(status_code=404, detail=f"No races found for season {season}")
         race_ids = season_races['raceId'].tolist()
+
+        # Define the two drivers to compare
+        selected_driver_ids = [driver1_id, driver2_id]
 
         # Get info and results for selected drivers
         selected_infos = []
