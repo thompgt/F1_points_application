@@ -172,21 +172,39 @@ def create_title_fight_chart(adjusted_results_with_races, season_year, points_sy
     season_results['cumulative_points'] = season_results.groupby(['driver_label'])['adjusted_points'].cumsum()
     season_results_filtered = season_results[season_results['driverId'].isin(title_fight_driver_ids)]
 
-    fig = px.line(
-        season_results_filtered,
-        x='race_number',
-        y='cumulative_points',
-        color='driver_label',
-        title=f'Title Fight: Cumulative Points for Top Contenders in {season_year} ({points_system_name})',
-        labels={'race_number': 'Race Number', 'cumulative_points': 'Cumulative Points', 'driver_label': 'Driver'},
-        markers=True
+    # Build serializable traces (plain Python lists) to avoid binary-packed arrays
+    traces = []
+    # Sort drivers by final cumulative points descending so legend is ordered by points
+    driver_order = (
+        season_results_filtered.groupby('driver_label')['cumulative_points']
+        .max()
+        .sort_values(ascending=False)
+        .index
+        .tolist()
     )
-    fig.update_layout(
-        height=400,
-        showlegend=True,
-        legend=dict(orientation="v", yanchor="top", y=1, xanchor="left", x=1.02)
-    )
-    return fig.to_json()
+    for driver_label in driver_order:
+        grp = season_results_filtered[season_results_filtered['driver_label'] == driver_label]
+        x = grp['race_number'].astype(int).tolist()
+        y = grp['cumulative_points'].astype(float).tolist()
+        traces.append({
+            'x': x,
+            'y': y,
+            'mode': 'lines+markers',
+            'name': driver_label,
+            'type': 'scatter',
+            'marker': {'symbol': 'circle'},
+            'line': {'dash': 'solid'}
+        })
+
+    layout = {
+        'title': f'Title Fight: Cumulative Points for Top Contenders in {season_year} ({points_system_name})',
+        'height': 400,
+        'showlegend': True,
+        'legend': dict(orientation="v", yanchor="top", y=1, xanchor="left", x=1.02),
+        'xaxis': {'title': 'Race Number'},
+        'yaxis': {'title': 'Cumulative Points'},
+    }
+    return json.dumps({'data': traces, 'layout': layout}, cls=PlotlyJSONEncoder)
 
 def create_cumulative_points_chart(adjusted_results_with_races, season_year, points_system_name, selected_driver_ids: Optional[List[int]] = None):
     """Create a cumulative points chart using Plotly"""
