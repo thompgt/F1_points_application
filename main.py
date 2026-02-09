@@ -576,16 +576,12 @@ async def calculate_standings_api(request: StandingsRequest):
         )
         distribution_chart = create_points_distribution_chart(standings, request.season_year, points_system_name)
         constructors_cumulative_chart = create_constructors_cumulative_chart(adjusted_results_with_races, request.season_year, points_system_name)
-        race_results_timeline_chart = create_race_results_timeline_chart(
-            adjusted_results_with_races, request.season_year, request.selected_driver_ids
-        )
         return {
             "standings": standings.to_dict('records'),
             "title_fight_chart": title_fight_chart,
             "cumulative_chart": cumulative_chart,
             "distribution_chart": distribution_chart,
             "constructors_cumulative_chart": constructors_cumulative_chart,
-            "race_results_timeline_chart": race_results_timeline_chart,
             "points_system": points_system,
             "points_system_name": points_system_name
         }
@@ -611,16 +607,29 @@ async def get_races(
 ):
     """Get all races for a specific season."""
     try:
-        _, races, _, _, _, _ = load_data()
-        season_races = races[races['year'] == season].copy()
-        
+        from db import Race, store_races, SessionLocal
+        _, races_csv, _, _, _, _ = load_data()
+        # Try DB first
+        db = SessionLocal()
+        db_races = db.query(Race).filter_by(round=season).all()
+        db.close()
+        if db_races:
+            race_list = [
+                {
+                    "raceId": r.raceId,
+                    "name": r.name,
+                    "round": r.round,
+                    "date": r.date,
+                    "circuitId": r.circuitId
+                } for r in db_races
+            ]
+            return {"races": race_list}
+        # Fallback to CSV
+        season_races = races_csv[races_csv['year'] == season].copy()
         if season_races.empty:
             return {"races": []}
-        
-        # Sort by round if available
         if 'round' in season_races.columns:
             season_races = season_races.sort_values('round')
-        
         race_list = []
         for _, race in season_races.iterrows():
             race_list.append({
@@ -630,7 +639,8 @@ async def get_races(
                 "date": str(race.get('date', '')) if pd.notna(race.get('date')) else None,
                 "circuitId": int(race['circuitId']) if 'circuitId' in race and pd.notna(race['circuitId']) else None
             })
-        
+        # Store in DB for future
+        store_races(race_list)
         return {"races": race_list}
     except Exception as e:
         logger.error(f"Error loading races: {e}")

@@ -631,6 +631,9 @@
                                 <div class="mb-3">
                                     <label for="raceSelect" class="form-label">Select Race:</label>
                                     <select id="raceSelect" class="form-select" onchange="loadRaceResults()"></select>
+                                    <button class="btn btn-outline-primary ms-2" id="openRaceResultsBtn" onclick="openRaceResultsTab()">
+                                        <i class="fas fa-external-link-alt"></i> View Full Race Results
+                                    </button>
                                 </div>
                                 <div class="table-responsive">
                                     <table class="table table-hover mb-0">
@@ -640,7 +643,8 @@
                                                 <th>Driver</th>
                                                 <th>Constructor</th>
                                                 <th>Points</th>
-                                                <th>Final Time</th>
+                                                <th>Laps</th>
+                                                <th>Gap/Time</th>
                                                 <th>Grid</th>
                                                 <th>Status</th>
                                             </tr>
@@ -668,11 +672,6 @@
                                 </div>
                             </div>
 
-                            <!-- Race Results Timeline Chart -->
-                            <div class="chart-container">
-                                <h4><i class="fas fa-clock"></i> Race Results Timeline</h4>
-                                <div id="raceResultsTimelineChart"></div>
-                            </div>
                         </div>
                     </div>
                 </div>
@@ -696,7 +695,17 @@
                 const selectedSeason = this.value;
                 document.getElementById('currentSeason').textContent = selectedSeason || 'No season selected';
                 await loadDriversForSeason(selectedSeason);
-                loadRaceDropdown();
+                // Clear race dropdown
+                const raceSelect = document.getElementById('raceSelect');
+                raceSelect.innerHTML = '<option value="">Select a race...</option>';
+            });
+            document.getElementById('raceSelect').addEventListener('click', async function() {
+                const selectedSeason = document.getElementById('seasonSelect').value;
+                if (!selectedSeason) {
+                    this.innerHTML = '<option value="">Select a season first</option>';
+                    return;
+                }
+                await loadRacesForSeason(selectedSeason);
             });
 
             document.getElementById('pointsSystemSelect').addEventListener('change', function() {
@@ -1024,13 +1033,14 @@
                     const resp = await fetch(`/api/races?season=${season}`);
                     if (!resp.ok) throw new Error(`HTTP error! status: ${resp.status}`);
                     const data = await resp.json();
-                    raceSelect.innerHTML = '';
+                    raceSelect.innerHTML = '<option value="">Select a race...</option>';
                     data.races.forEach((race, idx) => {
                         const opt = document.createElement('option');
                         opt.value = race.raceId;
-                        opt.textContent = `${race.round}. ${race.name}`;
+                        opt.textContent = `${race.round ? 'Round ' + race.round : 'Race ' + race.raceId}: ${race.name}`;
                         raceSelect.appendChild(opt);
                     });
+                    // Default to first race
                     if (data.races.length > 0) {
                         raceSelect.value = data.races[0].raceId;
                         await loadRaceResults();
@@ -1098,12 +1108,26 @@
                             <td>${result.driver}</td>
                             <td>${result.constructor}</td>
                             <td>${result.points}</td>
+                            <td>${result.laps ?? ''}</td>
                             <td>${result.final_time ?? ''}</td>
                             <td>${result.grid ?? ''}</td>
                             <td>${result.status ?? ''}</td>
                         `;
                         tableBody.appendChild(row);
                     });
+                        // Open race results in new tab
+                        function openRaceResultsTab() {
+                            const season = document.getElementById('seasonSelect').value;
+                            const raceSelect = document.getElementById('raceSelect');
+                            const raceNumber = raceSelect.value;
+                            if (!season || !raceNumber) {
+                                showAlert('Select season and race first', 'warning');
+                                return;
+                            }
+                            // Open new tab with race results page
+                            const url = `/race-detail?season=${encodeURIComponent(season)}&race=${encodeURIComponent(raceNumber)}`;
+                            window.open(url, '_blank');
+                        }
                 } catch (e) {
                     tableBody.innerHTML = '<tr><td colspan="7">Error loading race results</td></tr>';
                     showAlert('Error loading race results', 'danger');
@@ -1171,11 +1195,6 @@
         }
 
         function displayResults(data) {
-            // Display race results timeline chart
-            if (data.race_results_timeline_chart) {
-                const timelineData = JSON.parse(data.race_results_timeline_chart);
-                Plotly.newPlot('raceResultsTimelineChart', timelineData.data, timelineData.layout);
-            }
             // Display driver standings table
             const tbody = document.getElementById('standingsTableBody');
             tbody.innerHTML = '';
