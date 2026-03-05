@@ -705,7 +705,11 @@
                     this.innerHTML = '<option value="">Select a season first</option>';
                     return;
                 }
-                await loadRacesForSeason(selectedSeason);
+                // Only load races if the dropdown isn't already populated to avoid
+                // resetting the user's selection when they open the menu.
+                if (this.options.length <= 1) {
+                    await loadRacesForSeason(selectedSeason);
+                }
             });
 
             document.getElementById('pointsSystemSelect').addEventListener('change', function() {
