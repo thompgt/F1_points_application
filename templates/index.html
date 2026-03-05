@@ -1011,36 +1011,43 @@
                     option.textContent = season;
                     select.appendChild(option);
                 });
-                } catch (error) {
-                console.error('Error loading seasons:', error);
-                showAlert('Error loading seasons', 'danger');
-            }
 
                 const defaultSeason = select.options[1]?.value;
                 if (defaultSeason) {
+                    // Set as value and trigger loadRacesForSeason
+                    select.value = defaultSeason;
+                    document.getElementById('currentSeason').textContent = defaultSeason;
                     await loadRacesForSeason(defaultSeason);
+                    await loadDriversForSeason(defaultSeason);
                 }
+            } catch (error) {
+                console.error('Error loading seasons:', error);
+                showAlert('Error loading seasons', 'danger');
+            }
         }
 
             async function loadRacesForSeason(season) {
                 const raceSelect = document.getElementById('raceSelect');
-                raceSelect.innerHTML = '<option value="">Loading races...</option>';
                 if (!season) {
-                    raceSelect.innerHTML = '<option value="">Select a race...</option>';
+                    raceSelect.innerHTML = '<option value="">Select a season first</option>';
                     return;
                 }
+                
+                raceSelect.innerHTML = '<option value="">Loading races...</option>';
                 try {
                     const resp = await fetch(`/api/races?season=${season}`);
                     if (!resp.ok) throw new Error(`HTTP error! status: ${resp.status}`);
                     const data = await resp.json();
+                    
                     raceSelect.innerHTML = '<option value="">Select a race...</option>';
-                    data.races.forEach((race, idx) => {
+                    data.races.forEach((race) => {
                         const opt = document.createElement('option');
                         opt.value = race.raceId;
-                        opt.textContent = `${race.round ? 'Round ' + race.round : 'Race ' + race.raceId}: ${race.name}`;
+                        opt.textContent = `Round ${race.round || '?'}: ${race.name}`;
                         raceSelect.appendChild(opt);
                     });
-                    // Default to first race
+                    
+                    // Default to first race and load results
                     if (data.races.length > 0) {
                         raceSelect.value = data.races[0].raceId;
                         await loadRaceResults();
@@ -1051,87 +1058,72 @@
                 }
             }
 
-            async function loadRaceDropdown() {
-                const season = document.getElementById('seasonSelect').value;
-                const raceSelect = document.getElementById('raceSelect');
-                raceSelect.innerHTML = '<option value="">Loading races...</option>';
-                if (!season) {
-                    raceSelect.innerHTML = '<option value="">Select a season first</option>';
-                    return;
-                }
-                try {
-                    const resp = await fetch(`/api/races?season=${season}`);
-                    if (!resp.ok) throw new Error(`HTTP error! status: ${resp.status}`);
-                    const data = await resp.json();
-                    raceSelect.innerHTML = '';
-                    data.races.forEach((race, idx) => {
-                        const opt = document.createElement('option');
-                        opt.value = race.round || race.raceId;
-                        opt.textContent = `${race.round ? 'Round ' + race.round : 'Race ' + race.raceId}: ${race.name}`;
-                        raceSelect.appendChild(opt);
-                    });
-                    // Default to first race
-                    if (data.races.length > 0) {
-                        raceSelect.value = data.races[0].round || data.races[0].raceId;
-                        loadRaceResults();
-                    }
-                } catch (e) {
-                    raceSelect.innerHTML = '<option value="">Error loading races</option>';
-                    showAlert('Error loading races for the selected season', 'danger');
-                }
-            }
-
             async function loadRaceResults() {
                 const season = document.getElementById('seasonSelect').value;
                 const raceSelect = document.getElementById('raceSelect');
-                const raceNumber = raceSelect.value;
+                const raceId = raceSelect.value;
                 const tableBody = document.getElementById('raceResultsTableBody');
-                tableBody.innerHTML = '<tr><td colspan="7">Loading...</td></tr>';
-                if (!season || !raceNumber) {
-                    tableBody.innerHTML = '<tr><td colspan="7">Select season and race</td></tr>';
+                
+                if (!raceId) {
+                    tableBody.innerHTML = '<tr><td colspan="8" class="text-center">Select a race to see results</td></tr>';
                     return;
                 }
+                
+                tableBody.innerHTML = '<tr><td colspan="8" class="text-center"><div class="spinner-border spinner-border-sm text-danger"></div> Loading results...</td></tr>';
+                
                 try {
                     const resp = await fetch('/api/race-results', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ season_year: parseInt(season), race_number: parseInt(raceNumber) })
+                        body: JSON.stringify({ 
+                            season_year: parseInt(season), 
+                            race_id: parseInt(raceId) 
+                        })
                     });
+                    
                     if (!resp.ok) throw new Error(`HTTP error! status: ${resp.status}`);
                     const data = await resp.json();
+                    
                     tableBody.innerHTML = '';
+                    if (data.results.length === 0) {
+                        tableBody.innerHTML = '<tr><td colspan="8" class="text-center">No results found for this race</td></tr>';
+                        return;
+                    }
+                    
                     data.results.forEach((result, idx) => {
                         const row = document.createElement('tr');
                         const positionClass = idx < 3 ? `position-${idx + 1}` : '';
+                        
                         row.innerHTML = `
-                            <td class="${positionClass}"><strong>${result.position ?? ''}</strong></td>
+                            <td class="${positionClass}"><strong>${result.position || 'DNF'}</strong></td>
                             <td>${result.driver}</td>
                             <td>${result.constructor}</td>
                             <td>${result.points}</td>
-                            <td>${result.laps ?? ''}</td>
-                            <td>${result.final_time ?? ''}</td>
-                            <td>${result.grid ?? ''}</td>
-                            <td>${result.status ?? ''}</td>
+                            <td>${result.laps || '-'}</td>
+                            <td>${result.final_time || '-'}</td>
+                            <td>${result.grid || '-'}</td>
+                            <td><span class="badge ${result.position ? 'bg-success' : 'bg-danger'}">${result.status || (result.position ? 'Finished' : 'Retired')}</span></td>
                         `;
                         tableBody.appendChild(row);
                     });
-                        // Open race results in new tab
-                        function openRaceResultsTab() {
-                            const season = document.getElementById('seasonSelect').value;
-                            const raceSelect = document.getElementById('raceSelect');
-                            const raceNumber = raceSelect.value;
-                            if (!season || !raceNumber) {
-                                showAlert('Select season and race first', 'warning');
-                                return;
-                            }
-                            // Open new tab with race results page
-                            const url = `/race-detail?season=${encodeURIComponent(season)}&race=${encodeURIComponent(raceNumber)}`;
-                            window.open(url, '_blank');
-                        }
                 } catch (e) {
-                    tableBody.innerHTML = '<tr><td colspan="7">Error loading race results</td></tr>';
-                    showAlert('Error loading race results', 'danger');
+                    console.error('Error loading race results:', e);
+                    tableBody.innerHTML = '<tr><td colspan="8" class="text-center text-danger">Error loading race results</td></tr>';
                 }
+            }
+
+            function openRaceResultsTab() {
+                const season = document.getElementById('seasonSelect').value;
+                const raceSelect = document.getElementById('raceSelect');
+                const raceId = raceSelect.value;
+                
+                if (!raceId) {
+                    showAlert('Please select a race first', 'warning');
+                    return;
+                }
+                
+                const url = `/race-detail?season=${encodeURIComponent(season)}&race=${encodeURIComponent(raceId)}`;
+                window.open(url, '_blank');
             }
 
         async function calculateStandings() {

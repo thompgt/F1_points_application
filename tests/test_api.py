@@ -18,11 +18,15 @@ def test_head_to_head_basic():
         data = resp.json()
         assert 'driver1_stats' in data and 'driver2_stats' in data
 
-def test_race_api():
-    # attempt to find a race id from seasons endpoint
-    resp = client.get('/api/seasons')
-    if resp.status_code != 200:
-        pytest.skip('seasons not available')
-    # pick a plausible race id
-    resp2 = client.get('/api/race/1')
-    assert resp2.status_code in (200, 404)
+def test_race_results_api():
+    # Test with 2023 Season, Bahrain GP (raceId 1101 usually)
+    resp = client.post('/api/race-results', json={
+        "season_year": 2023,
+        "race_id": 1101
+    })
+    # If 2023 data isn't in the small sample, it might 404, but we check if it handles the request
+    assert resp.status_code in (200, 404)
+    if resp.status_code == 200:
+        data = resp.json()
+        assert 'results' in data
+        assert 'race_name' in data

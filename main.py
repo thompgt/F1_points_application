@@ -653,17 +653,24 @@ async def get_race_results(request: RaceResultsRequest):
     try:
         results, races, drivers, _, constructors, _ = load_data()
         
-        # Find the race by season and round number
-        season_races = races[races['year'] == request.season_year]
-        if season_races.empty:
-            raise HTTPException(status_code=404, detail=f"No races found for season {request.season_year}")
+        if request.race_id:
+            race = races[races['raceId'] == request.race_id]
+            if race.empty:
+                raise HTTPException(status_code=404, detail=f"Race ID {request.race_id} not found")
+            race_id = int(request.race_id)
+        else:
+            # Find the race by season and round number
+            season_races = races[races['year'] == request.season_year]
+            if season_races.empty:
+                raise HTTPException(status_code=404, detail=f"No races found for season {request.season_year}")
+            
+            # Find race by round number
+            race = season_races[season_races['round'] == request.race_number]
+            if race.empty:
+                raise HTTPException(status_code=404, detail=f"Race {request.race_number} not found in season {request.season_year}")
+            
+            race_id = int(race.iloc[0]['raceId'])
         
-        # Find race by round number
-        race = season_races[season_races['round'] == request.race_number]
-        if race.empty:
-            raise HTTPException(status_code=404, detail=f"Race {request.race_number} not found in season {request.season_year}")
-        
-        race_id = int(race.iloc[0]['raceId'])
         race_results = results[results['raceId'] == race_id].copy()
         
         if race_results.empty:
@@ -695,22 +702,44 @@ async def get_race_results(request: RaceResultsRequest):
             elif 'milliseconds' in row and pd.notna(row['milliseconds']):
                 ms = float(row['milliseconds'])
                 final_time = f"{ms/1000:.3f}s"
-            
+            # Use the actual `position` column to determine finishing (DNF if NaN/null)
+            pos_val = None
+            if 'position' in row and pd.notna(row['position']):
+                try:
+                    pos_val = int(row['position'])
+                except Exception:
+                    pos_val = None
+
             result_list.append({
-                "position": int(row['positionOrder']) if pd.notna(row.get('positionOrder')) else None,
+                "position": pos_val,
                 "driver": f"{row.get('forename', '')} {row.get('surname', '')}",
+                "forename": row.get('forename', ''),
+                "surname": row.get('surname', ''),
                 "constructor": row.get('constructor', ''),
+                "constructor_name": row.get('constructor', ''),
                 "points": float(row.get('points', 0)),
                 "grid": int(row['grid']) if pd.notna(row.get('grid')) else None,
                 "final_time": final_time,
                 "status": row.get('status', '') if pd.notna(row.get('status')) else None,
-                "laps": int(row['laps']) if pd.notna(row.get('laps')) else None
+                "laps": int(row['laps']) if pd.notna(row['laps']) else None
             })
         
+        # Provide race metadata (name, round, date)
+        race_row = race.iloc[0]
+        race_round = None
+        if 'round' in race_row and pd.notna(race_row.get('round')):
+            try:
+                race_round = int(race_row.get('round'))
+            except Exception:
+                race_round = None
+        race_date = str(race_row.get('date')) if pd.notna(race_row.get('date')) else None
+
         return {
             "results": result_list,
-            "race_name": race.iloc[0].get('name', ''),
-            "round": request.race_number
+            "race_name": race_row.get('name', ''),
+            "round": race_round,
+            "date": race_date,
+            "race_id": int(race_row.get('raceId')) if 'raceId' in race_row and pd.notna(race_row.get('raceId')) else None
         }
     except HTTPException:
         raise
@@ -1084,123 +1113,6 @@ async def api_race_detail(race_id: int):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/api/head-to-head")
-async def get_head_to_head_stats(driver1_id: int, driver2_id: int, season: int):
-    """Get detailed head-to-head statistics for two drivers in a specific season."""
-    try:
-        results, races, drivers, _, constructors, driver_standings = load_data()
-        season_races = races[races['year'] == season]
-        if season_races.empty:
-            raise HTTPException(status_code=404, detail=f"No races found for season {season}")
-        race_ids = season_races['raceId'].tolist()
-
-        # Define the two drivers to compare
-        selected_driver_ids = [driver1_id, driver2_id]
-
-        # Get info and results for selected drivers
-        selected_infos = []
-        selected_stats = []
-        selected_results = []
-        for driver_id in selected_driver_ids:
-            driver_df = drivers[drivers['driverId'] == driver_id]
-            if driver_df.empty:
-                continue
-            driver_info = driver_df.iloc[0]
-            season_results = results[results['raceId'].isin(race_ids)]
-            driver_results = season_results[season_results['driverId'] == driver_id].copy()
-            driver_results = pd.merge(driver_results, constructors[['constructorId', 'name']], on='constructorId', how='left')
-            driver_results = pd.merge(driver_results, races[['raceId', 'name', 'round']], on='raceId', how='left')
-            selected_infos.append(driver_info)
-            selected_results.append(driver_results)
-            # Stats
-            wins = len(driver_results[driver_results['positionOrder'] == 1])
-            poles = len(driver_results[driver_results['grid'] == 1])
-            podiums = len(driver_results[driver_results['positionOrder'].isin([1, 2, 3])])
-            points_finishes = len(driver_results[driver_results['points'] > 0])
-            dnfs = len(driver_results[driver_results['positionText'].str.contains('R|D|W|E', na=False)])
-            total_points = driver_results['points'].sum()
-            races_entered = len(driver_results)
-            finished_races = driver_results[driver_results['positionOrder'].notna()]
-            best_finish = finished_races['positionOrder'].min() if not finished_races.empty else None
-            avg_finish = finished_races['positionOrder'].mean() if not finished_races.empty else None
-            constructor = driver_results['name'].mode().iloc[0] if not driver_results['name'].mode().empty else None
-            selected_stats.append({
-                'driver_name': f"{driver_info['forename']} {driver_info['surname']}",
-                'wins': int(wins),
-                'poles': int(poles),
-                'podiums': int(podiums),
-                'points_finishes': int(points_finishes),
-                'dnfs': int(dnfs),
-                'total_points': float(total_points),
-                'best_finish': int(best_finish) if best_finish else None,
-                'avg_finish': round(avg_finish, 1) if avg_finish else None,
-                'constructor': constructor,
-                'races_entered': int(races_entered)
-            })
-
-        # Head-to-head only if two drivers selected
-        h2h_comparisons = []
-        h2h_record = None
-        if len(selected_driver_ids) == 2:
-            driver1_info = selected_infos[0]
-            driver2_info = selected_infos[1]
-            driver1_results = selected_results[0]
-            driver2_results = selected_results[1]
-            for _, race in season_races.iterrows():
-                race_id = race['raceId']
-                d1_race = driver1_results[driver1_results['raceId'] == race_id]
-                d2_race = driver2_results[driver2_results['raceId'] == race_id]
-                d1_pos = None
-                d2_pos = None
-                if not d1_race.empty:
-                    val = d1_race['positionOrder'].iat[0]
-                    d1_pos = int(val) if pd.notna(val) else None
-                if not d2_race.empty:
-                    val = d2_race['positionOrder'].iat[0]
-                    d2_pos = int(val) if pd.notna(val) else None
-                if d1_pos is not None and d2_pos is not None:
-                    winner = driver1_info['surname'] if d1_pos < d2_pos else driver2_info['surname']
-                    # compute seconds behind if milliseconds available
-                    margin = None
-                    try:
-                        if 'milliseconds' in d1_race.columns and 'milliseconds' in d2_race.columns:
-                            ms1 = d1_race.iloc[0].get('milliseconds')
-                            ms2 = d2_race.iloc[0].get('milliseconds')
-                            if pd.notna(ms1) and pd.notna(ms2):
-                                margin = round(abs(float(ms1) - float(ms2)) / 1000.0, 3)
-                    except Exception:
-                        margin = None
-                else:
-                    winner = "One DNF"
-                    margin = None
-                h2h_comparisons.append({
-                    'race_name': race['name'],
-                    'round': int(race['round']),
-                    'driver1_position': d1_pos,
-                    'driver2_position': d2_pos,
-                    'winner': winner,
-                    'margin': margin
-                })
-            driver1_surname = str(driver1_info['surname'])
-            driver2_surname = str(driver2_info['surname'])
-            h2h_wins_d1 = len([c for c in h2h_comparisons if c['winner'] == driver1_surname])
-            h2h_wins_d2 = len([c for c in h2h_comparisons if c['winner'] == driver2_surname])
-            h2h_ties = len([c for c in h2h_comparisons if c['winner'] == "Both DNF"])
-            h2h_record = {
-                'driver1_wins': h2h_wins_d1,
-                'driver2_wins': h2h_wins_d2,
-                'ties': h2h_ties,
-                'total_races': len(h2h_comparisons)
-            }
-
-        return {
-            'season': season,
-            'selected_stats': selected_stats,
-            'head_to_head_record': h2h_record,
-            'race_by_race': h2h_comparisons
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/simulate-season")
 async def simulate_season_endpoint(request: SimulateSeasonRequest):

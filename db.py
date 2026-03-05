@@ -29,33 +29,36 @@ class HeadToHeadCache(Base):
     response_json = Column(Text)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
-class RaceTelemetry(Base):
-    class Race(Base):
-        __tablename__ = 'races_db'
-        id = Column(Integer, primary_key=True, index=True)
-        raceId = Column(Integer, index=True, unique=True)
-        name = Column(String(128))
-        round = Column(Integer)
-        date = Column(String(32))
-        circuitId = Column(Integer)
+class Race(Base):
+    __tablename__ = 'races_db'
+    id = Column(Integer, primary_key=True, index=True)
+    raceId = Column(Integer, index=True, unique=True)
+    name = Column(String(128))
+    round = Column(Integer)
+    date = Column(String(32))
+    circuitId = Column(Integer)
 
-    def store_races(race_list):
-        db = SessionLocal()
-        try:
-            for race in race_list:
-                # Check if race already exists
-                existing = db.query(Race).filter_by(raceId=race['raceId']).first()
-                if not existing:
-                    db.add(Race(
-                        raceId=race['raceId'],
-                        name=race.get('name',''),
-                        round=race.get('round'),
-                        date=race.get('date',''),
-                        circuitId=race.get('circuitId')
-                    ))
-            db.commit()
-        finally:
-            db.close()
+
+def store_races(race_list):
+    db = SessionLocal()
+    try:
+        for race in race_list:
+            # Check if race already exists
+            existing = db.query(Race).filter_by(raceId=race['raceId']).first()
+            if not existing:
+                db.add(Race(
+                    raceId=race['raceId'],
+                    name=race.get('name',''),
+                    round=race.get('round'),
+                    date=race.get('date',''),
+                    circuitId=race.get('circuitId')
+                ))
+        db.commit()
+    finally:
+        db.close()
+
+
+class RaceTelemetry(Base):
     __tablename__ = 'race_telemetry'
     id = Column(Integer, primary_key=True, index=True)
     race_id = Column(Integer, index=True)

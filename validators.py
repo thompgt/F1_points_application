@@ -128,12 +128,23 @@ class RaceResultsRequest(BaseModel):
         le=MAX_SEASON_YEAR,
         description="The F1 season year"
     )
-    race_number: int = Field(
-        ...,
+    race_number: Optional[int] = Field(
+        default=None,
         ge=1,
         le=30,
         description="The race number/round within the season"
     )
+    race_id: Optional[int] = Field(
+        default=None,
+        ge=1,
+        description="Internal database race ID"
+    )
+
+    @model_validator(mode='after')
+    def check_at_least_one_id(self):
+        if self.race_number is None and self.race_id is None:
+            raise ValueError("Either race_number or race_id must be provided")
+        return self
 
 
 class HeadToHeadRequest(BaseModel):
