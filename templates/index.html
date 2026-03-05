@@ -692,13 +692,14 @@
 
         function setupEventListeners() {
             document.getElementById('seasonSelect').addEventListener('change', async function() {
-                const selectedSeason = this.value;
-                document.getElementById('currentSeason').textContent = selectedSeason || 'No season selected';
-                await loadDriversForSeason(selectedSeason);
-                // Clear race dropdown
-                const raceSelect = document.getElementById('raceSelect');
-                raceSelect.innerHTML = '<option value="">Select a race...</option>';
-            });
+                    const selectedSeason = this.value;
+                    document.getElementById('currentSeason').textContent = selectedSeason || 'No season selected';
+                    // Persist user's selection so it survives reloads
+                    try { window.localStorage.setItem('selectedSeason', selectedSeason); } catch(e) { /* ignore */ }
+                    // Load drivers and races for the newly selected season
+                    await loadDriversForSeason(selectedSeason);
+                    await loadRacesForSeason(selectedSeason);
+                });
             document.getElementById('raceSelect').addEventListener('click', async function() {
                 const selectedSeason = document.getElementById('seasonSelect').value;
                 if (!selectedSeason) {
@@ -793,8 +794,6 @@
             // Clear existing options
             select1.innerHTML = '<option value="">Select a driver...</option>';
             select2.innerHTML = '<option value="">Select a driver...</option>';
-                console.log(`Loaded ${data.drivers.length} drivers for season ${season}`);
-                await loadRacesForSeason(season);
             if (!season) {
                 select1.disabled = true;
                 select2.disabled = true;
@@ -802,6 +801,7 @@
             }
 
             try {
+                console.debug('loadDriversForSeason start', { season });
                 let data;
                 if (cachedDriversBySeason[season]) {
                     data = cachedDriversBySeason[season];
@@ -813,6 +813,8 @@
                     data = await resp.json();
                     cachedDriversBySeason[season] = data;
                 }
+
+                console.debug('loadDriversForSeason loaded', { season, drivers: data.drivers?.length });
 
                 // Populate dropdowns with drivers
                 data.drivers.forEach(d => {
@@ -1008,7 +1010,7 @@
                 
                 const select = document.getElementById('seasonSelect');
                 select.innerHTML = '<option value="">Select a season...</option>';
-                
+                console.debug('loadSeasons received', { count: data.seasons?.length });
                 data.seasons.sort((a, b) => b - a).forEach(season => {
                     const option = document.createElement('option');
                     option.value = season;
@@ -1016,9 +1018,23 @@
                     select.appendChild(option);
                 });
 
-                const defaultSeason = select.options[1]?.value;
+                // Choose a sensible default season. Priority:
+                // 1) previously selected season in localStorage (if still available)
+                // 2) current year (if present in seasons)
+                // 3) most recent season available
+                const seasonsList = data.seasons.slice().sort((a,b) => b - a);
+                const currentYear = new Date().getFullYear();
+                let defaultSeason = null;
+                const stored = window.localStorage.getItem('selectedSeason');
+                if (stored && seasonsList.includes(parseInt(stored))) {
+                    defaultSeason = parseInt(stored);
+                } else if (seasonsList.includes(currentYear)) {
+                    defaultSeason = currentYear;
+                } else {
+                    defaultSeason = seasonsList[0];
+                }
+
                 if (defaultSeason) {
-                    // Set as value and trigger loadRacesForSeason
                     select.value = defaultSeason;
                     document.getElementById('currentSeason').textContent = defaultSeason;
                     await loadRacesForSeason(defaultSeason);

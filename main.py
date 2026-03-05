@@ -503,7 +503,12 @@ async def get_seasons():
     """Get all available seasons"""
     try:
         _, _, _, seasons, _, _ = load_data()
-        return {"seasons": seasons['year'].tolist()}
+        season_list = seasons['year'].tolist()
+        try:
+            logger.debug(f"Seasons loaded: min={seasons['year'].min()}, max={seasons['year'].max()}, count={len(season_list)}")
+        except Exception:
+            logger.debug(f"Seasons loaded count={len(season_list)}")
+        return {"seasons": season_list}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
