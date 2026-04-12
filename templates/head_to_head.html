@@ -30,6 +30,15 @@
         #raceTable th, #raceTable td {
             color: #ffffff !important;
         }
+        #raceTable tbody tr.driver1-ahead td {
+            background-color: rgba(255, 120, 120, 0.18) !important;
+        }
+        #raceTable tbody tr.driver2-ahead td {
+            background-color: rgba(120, 170, 255, 0.18) !important;
+        }
+        #raceTable tbody tr.tie-race td {
+            background-color: rgba(180, 180, 180, 0.14) !important;
+        }
     </style>
 </head>
 <body>
@@ -38,12 +47,7 @@
         <h2 id="pageTitle">Head-to-Head</h2>
 
         <div class="row mb-3">
-            <div class="col-md-8">
-                <div class="form-check form-switch">
-                    <input class="form-check-input" type="checkbox" id="modeToggle" checked>
-                    <label class="form-check-label" for="modeToggle">Season mode (unchecked = Career)</label>
-                </div>
-            </div>
+            <div class="col-md-8"></div>
             <div class="col-md-4 text-end">
                 <button id="refreshBtn" class="btn btn-primary">Refresh</button>
             </div>
@@ -61,13 +65,21 @@
                 </div>
             </div>
             <div class="col-lg-8">
-                <div class="card p-3 mb-3">
-                    <h5>Cumulative Points (selected mode)</h5>
-                    <div id="h2hCumulativeChart"></div>
-                </div>
                 <div class="card p-3">
                     <h5>Race-by-Race</h5>
+                    <div class="btn-group btn-group-sm mb-3" role="group" aria-label="comparison mode">
+                        <button type="button" class="btn btn-outline-light active" id="raceModeBtn">Race Results</button>
+                        <button type="button" class="btn btn-outline-light" id="qualiModeBtn">Quali Results</button>
+                    </div>
                     <div class="table-responsive"><table class="table table-sm table-dark" id="raceTable"><thead><tr><th>Round</th><th>Race</th><th>Driver 1</th><th>Driver 2</th><th>Winner</th><th>Margin</th></tr></thead><tbody></tbody></table></div>
+                </div>
+                <div class="card p-3 mt-3">
+                    <h5>Cumulative Points Progression</h5>
+                    <div id="h2hCumulativeChart"></div>
+                </div>
+                <div class="card p-3 mt-3">
+                    <h5>Head-to-Head Performance Radar</h5>
+                    <div id="h2hRadarChart"></div>
                 </div>
             </div>
         </div>
@@ -79,58 +91,93 @@
         const driver1 = params.get('driver1');
         const driver2 = params.get('driver2');
         const season = params.get('season');
+        let h2hData = null;
+        let comparisonMode = 'race'; // race | quali
 
         document.addEventListener('DOMContentLoaded', () => {
             if (!driver1 || !driver2) {
                 document.getElementById('pageTitle').textContent = 'Head-to-Head (invalid drivers)';
                 return;
             }
-            // initialize
-            document.getElementById('modeToggle').addEventListener('change', loadAll);
             document.getElementById('refreshBtn').addEventListener('click', loadAll);
+            document.getElementById('raceModeBtn').addEventListener('click', () => setComparisonMode('race'));
+            document.getElementById('qualiModeBtn').addEventListener('click', () => setComparisonMode('quali'));
             loadWikiSummary();
             loadAll();
         });
 
         async function loadAll(){
-            const mode = document.getElementById('modeToggle').checked ? 'season' : 'career';
-            await loadH2H(mode);
+            await loadH2H();
         }
 
-        async function loadH2H(mode){
+        function setComparisonMode(mode) {
+            comparisonMode = mode;
+            document.getElementById('raceModeBtn').classList.toggle('active', mode === 'race');
+            document.getElementById('qualiModeBtn').classList.toggle('active', mode === 'quali');
+            if (h2hData) renderRaceTable(h2hData);
+        }
+
+        function constructorColor(name, fallback){
+            if (!name) return fallback;
+            const n = String(name).toLowerCase();
+            if (n.includes('red bull')) return '#1E5BC6';
+            if (n.includes('mercedes')) return '#00D2BE';
+            if (n.includes('ferrari')) return '#DC0000';
+            if (n.includes('mclaren')) return '#FF8700';
+            if (n.includes('aston martin')) return '#006F62';
+            if (n.includes('alpine')) return '#0090FF';
+            if (n.includes('williams')) return '#005AFF';
+            if (n.includes('alphatauri') || n.includes('rb')) return '#2B4562';
+            if (n.includes('sauber') || n.includes('alfa romeo')) return '#900000';
+            if (n.includes('haas')) return '#B6BABD';
+            return fallback;
+        }
+
+        function rgba(hex, alpha){
+            const h = hex.replace('#', '');
+            const bigint = parseInt(h.length === 3 ? h.split('').map(c => c + c).join('') : h, 16);
+            const r = (bigint >> 16) & 255;
+            const g = (bigint >> 8) & 255;
+            const b = bigint & 255;
+            return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+        }
+
+        async function loadH2H(){
             try{
-                const resp = await fetch(`/api/head-to-head?driver1_id=${driver1}&driver2_id=${driver2}&season=${season}&mode=${mode}`);
+                const resp = await fetch(`/api/head-to-head?driver1_id=${driver1}&driver2_id=${driver2}&season=${season}&mode=season`);
                 if(!resp.ok) throw new Error('Failed to load');
-                const data = await resp.json();
-                renderStats(data, mode);
+                h2hData = await resp.json();
+                renderStats(h2hData);
+                renderRaceTable(h2hData);
+                renderRadarChart(h2hData);
             }catch(e){
-                console.error(e); document.getElementById('statsTable').textContent = 'Error loading data';
+                console.error(e);
+                document.getElementById('statsTable').textContent = 'Error loading data';
+                return;
             }
-            // load cumulative chart (use existing calculate endpoint to build chart)
+
             try{
-                // call calculate standings endpoint to get cumulative_chart for these two drivers
-                const calcResp = await fetch('/api/calculate-standings', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({season_year: parseInt(season)})});
-                if(calcResp.ok){
-                    const calcData = await calcResp.json();
-                    // the create_cumulative_points_chart supports selected_driver_ids via API? We'll call create_cumulative_points_chart directly by fetching cumulative_chart and then filter on client for two drivers
-                    const cum = JSON.parse(calcData.cumulative_chart);
-                    // Filter traces to only the two drivers
-                    const traces = cum.data.filter(t => t.name && (t.name.includes(data.driver1_stats.driver_name) || t.name.includes(data.driver2_stats.driver_name)));
-                    Plotly.newPlot('h2hCumulativeChart', traces, cum.layout || {});
+                if(h2hData.cumulative_chart){
+                    const cum = JSON.parse(h2hData.cumulative_chart);
+                    Plotly.newPlot('h2hCumulativeChart', cum.data || [], cum.layout || {});
                 }
-            }catch(e){ console.warn('cumulative chart load failed', e); }
+            }catch(e){
+                console.warn('cumulative chart load failed', e);
+            }
         }
 
-        function renderStats(data, mode){
+        function renderStats(data){
             const statsDiv = document.getElementById('statsTable');
-            const d1 = data.driver1_stats; const d2 = data.driver2_stats;
+            const d1 = data.driver1_stats;
+            const d2 = data.driver2_stats;
+
             function fmtNumber(v, decimals){
                 if (v === null || v === undefined || v === 'N/A') return 'N/A';
                 const n = Number(v);
                 if (Number.isNaN(n)) return v;
                 return n.toFixed(decimals);
             }
-            // Build simple table with formatted numbers
+
             const rows = [
                 ['Metric', d1.driver_name, d2.driver_name],
                 ['Wins', d1.wins ?? 'N/A', d2.wins ?? 'N/A'],
@@ -139,22 +186,107 @@
                 ['Points', (d1.total_points!=null)? Number(d1.total_points).toFixed(0) : 'N/A', (d2.total_points!=null)? Number(d2.total_points).toFixed(0) : 'N/A'],
                 ['DNFs', d1.dnfs ?? 'N/A', d2.dnfs ?? 'N/A'],
                 ['Avg Grid', (d1.avg_grid!=null)? fmtNumber(d1.avg_grid,1) : 'N/A', (d2.avg_grid!=null)? fmtNumber(d2.avg_grid,1) : 'N/A'],
-                ['Median Grid', (d1.median_grid!=null)? fmtNumber(d1.median_grid,1) : 'N/A', (d2.median_grid!=null)? fmtNumber(d2.median_grid,1) : 'N/A'],
+                ['Average Finish', (d1.avg_finish!=null)? fmtNumber(d1.avg_finish,2) : 'N/A', (d2.avg_finish!=null)? fmtNumber(d2.avg_finish,2) : 'N/A'],
                 ['Avg Grid Gap to Teammate', (d1.avg_grid_gap_to_teammate!=null)? fmtNumber(d1.avg_grid_gap_to_teammate,3) : 'N/A', (d2.avg_grid_gap_to_teammate!=null)? fmtNumber(d2.avg_grid_gap_to_teammate,3) : 'N/A']
             ];
+
             let html = '<table class="table table-sm table-dark mb-0"><tbody>';
             rows.forEach(r => { html += `<tr><th>${r[0]}</th><td>${r[1]}</td><td>${r[2]}</td></tr>`; });
             html += '</tbody></table>';
             statsDiv.innerHTML = html;
+        }
 
-            // race table
-            const tbody = document.querySelector('#raceTable tbody'); tbody.innerHTML = '';
-            data.race_by_race.forEach(r => {
+        function renderRaceTable(data){
+            const tbody = document.querySelector('#raceTable tbody');
+            tbody.innerHTML = '';
+
+            const rows = (data.race_by_race || []).slice().sort((a, b) => (a.round ?? 999) - (b.round ?? 999));
+            rows.forEach(r => {
                 const tr = document.createElement('tr');
-                const marginText = (r.margin !== null && r.margin !== undefined) ? (r.margin + 's') : 'N/A';
-                tr.innerHTML = `<td>${r.round}</td><td>${r.race_name}</td><td>${r.driver1_position||'DNF'}</td><td>${r.driver2_position||'DNF'}</td><td>${r.winner}</td><td>${marginText}</td>`;
+
+                const isRace = comparisonMode === 'race';
+                const p1 = isRace ? r.driver1_race_position : r.driver1_quali_position;
+                const p2 = isRace ? r.driver2_race_position : r.driver2_quali_position;
+                const winner = isRace ? r.winner_race : r.winner_quali;
+                const winnerDriver = isRace ? r.winner_driver_race : r.winner_driver_quali;
+                const marginText = isRace
+                    ? ((r.race_margin_seconds !== null && r.race_margin_seconds !== undefined) ? `${r.race_margin_seconds}s` : 'N/A')
+                    : ((r.quali_margin_positions !== null && r.quali_margin_positions !== undefined) ? `${r.quali_margin_positions} grid spots` : 'N/A');
+
+                if (winnerDriver === 'driver1') {
+                    tr.classList.add('driver1-ahead');
+                    const color = constructorColor(r.driver1_constructor, '#ff7a7a');
+                    tr.style.backgroundColor = rgba(color, 0.16);
+                } else if (winnerDriver === 'driver2') {
+                    tr.classList.add('driver2-ahead');
+                    const color = constructorColor(r.driver2_constructor, '#7aa8ff');
+                    tr.style.backgroundColor = rgba(color, 0.16);
+                } else if (winnerDriver === 'tie') {
+                    tr.classList.add('tie-race');
+                }
+
+                tr.innerHTML = `<td>${r.round ?? '-'}</td><td>${r.race_name}</td><td>${p1 || 'DNF'}</td><td>${p2 || 'DNF'}</td><td>${winner || 'N/A'}</td><td>${marginText}</td>`;
                 tbody.appendChild(tr);
             });
+        }
+
+        function renderRadarChart(data){
+            try {
+                const d1 = data.driver1_stats || {};
+                const d2 = data.driver2_stats || {};
+                const s1 = d1.radar_scores || {};
+                const s2 = d2.radar_scores || {};
+                const categories = Object.keys(s1);
+                if (!categories.length) return;
+
+                const r1 = categories.map(c => Number(s1[c] ?? 50));
+                const r2 = categories.map(c => Number(s2[c] ?? 50));
+
+                const trace1 = {
+                    type: 'scatterpolar',
+                    r: r1,
+                    theta: categories,
+                    fill: 'toself',
+                    name: d1.driver_name || 'Driver 1',
+                    line: { color: '#ff7a7a' },
+                    fillcolor: 'rgba(255, 122, 122, 0.25)'
+                };
+
+                const trace2 = {
+                    type: 'scatterpolar',
+                    r: r2,
+                    theta: categories,
+                    fill: 'toself',
+                    name: d2.driver_name || 'Driver 2',
+                    line: { color: '#7aa8ff' },
+                    fillcolor: 'rgba(122, 168, 255, 0.25)'
+                };
+
+                const layout = {
+                    polar: {
+                        radialaxis: {
+                            visible: true,
+                            range: [0, 100],
+                            tickfont: { color: '#fff' },
+                            gridcolor: 'rgba(255,255,255,0.2)'
+                        },
+                        angularaxis: {
+                            tickfont: { color: '#fff', size: 11 },
+                            gridcolor: 'rgba(255,255,255,0.2)'
+                        }
+                    },
+                    showlegend: true,
+                    height: 460,
+                    paper_bgcolor: 'rgba(0,0,0,0)',
+                    plot_bgcolor: 'rgba(0,0,0,0)',
+                    font: { color: '#fff' },
+                    margin: { t: 20, r: 20, b: 20, l: 20 }
+                };
+
+                Plotly.newPlot('h2hRadarChart', [trace1, trace2], layout);
+            } catch (e) {
+                console.warn('radar chart load failed', e);
+            }
         }
 
         async function loadWikiSummary(){
@@ -163,7 +295,9 @@
                 if(!resp.ok) throw new Error('wiki fetch failed');
                 const data = await resp.json();
                 document.getElementById('wikiSummary').textContent = data.summary || 'No summary available';
-            }catch(e){ document.getElementById('wikiSummary').textContent = 'Could not fetch Wikipedia summary'; }
+            }catch(e){
+                document.getElementById('wikiSummary').textContent = 'Could not fetch Wikipedia summary';
+            }
         }
     </script>
 </body>

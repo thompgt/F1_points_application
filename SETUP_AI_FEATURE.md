@@ -1,4 +1,4 @@
-# Setup Instructions for AI Season Simulation Feature
+# Setup Instructions for AI Season Simulation Feature (Ollama + Docker)
 
 ## Quick Start
 
@@ -9,7 +9,6 @@ pip install -r requirements.txt
 ```
 
 This will install all required packages including:
-- `google-generativeai` - Google Gemini AI API
 - `beautifulsoup4` - Web scraping
 - `chromadb` - Vector database for RAG
 - `wikipedia-api` - Wikipedia data fetching
@@ -17,26 +16,44 @@ This will install all required packages including:
 - `Pillow` - Image processing
 - `kaleido` - Plotly image export
 
-### 2. Get Gemini API Key
+### 2. Start Ollama with Docker
 
-1. Visit [Google AI Studio](https://makersuite.google.com/app/apikey)
-2. Sign in with your Google account
-3. Click "Create API Key"
-4. Copy the generated API key
+This app uses a fixed model: `llama3.1:8b`.
+
+### 2A. Local Ollama Setup (No Docker)
+
+1. Install Ollama: https://ollama.com/download
+2. Pull the model:
+
+```bash
+ollama pull llama3.1:8b
+```
+
+3. Verify Ollama server is available:
+
+```bash
+curl http://localhost:11434/api/tags
+```
+
+### 2B. Docker Ollama Setup
+
+```bash
+docker compose -f docker-compose.ollama.yml up -d
+```
+
+Then pull a model (example):
+
+```bash
+docker exec -it ollama ollama pull llama3.1:8b
+```
 
 ### 3. Configure Environment
 
-**Option A: Using .env file (Recommended)**
+Use environment variables (optional if using defaults):
+
 ```bash
-# Copy the example file
-cp .env.example .env
-
-# Edit .env and add your key
-GEMINI_API_KEY=your_actual_api_key_here
+OLLAMA_BASE_URL=http://localhost:11434
 ```
-
-**Option B: Enter at runtime**
-- The application will prompt for the API key when you click "Simulate Season"
 
 ### 4. Run the Application
 
@@ -55,7 +72,7 @@ uvicorn main:app --reload --host 0.0.0.0 --port 8000
 2. Select a season (e.g., 2021)
 3. Choose a points system
 4. Click **"Simulate Season"** button
-5. Enter your Gemini API key if prompted
+5. No model selection is required (fixed to `llama3.1:8b`)
 6. Wait 30-60 seconds for generation
 7. PDF will download automatically!
 
@@ -64,7 +81,7 @@ uvicorn main:app --reload --host 0.0.0.0 --port 8000
 The PDF report includes:
 
 ### 📊 Comprehensive Analysis
-- **AI-Generated Summary**: Gemini analyzes the season with context
+- **AI-Generated Summary**: Ollama analyzes the season with context
 - **Historical Context**: Wikipedia data via RAG (Retrieval Augmented Generation)
 - **Championship Analysis**: AI insights on the title battle
 - **Key Highlights**: Memorable moments and surprises
@@ -87,7 +104,7 @@ The PDF report includes:
 2. **Store**: Saves to ChromaDB vector database
 3. **Retrieve**: Queries relevant context for the season
 4. **Augment**: Combines with standings data
-5. **Generate**: Gemini creates comprehensive analysis
+5. **Generate**: Ollama creates comprehensive analysis
 
 ### Web Scraping
 - Uses Beautiful Soup to parse Wikipedia pages
@@ -122,17 +139,12 @@ pip install kaleido==0.2.1
 ### No images in PDF
 This is normal for older seasons (pre-2000s) or if Wikipedia has limited content.
 
-### Gemini API errors
-- **Invalid API key**: Check your key at AI Studio
-- **Quota exceeded**: Free tier has limits, wait or upgrade
-- **Rate limit**: Wait a few seconds between requests
+### Ollama errors
+- **Connection refused**: Make sure Docker is running and Ollama container is up
+- **Model not found**: Pull the model via `docker exec -it ollama ollama pull <model>`
+- **Slow response**: First request is slower while model warms up
 
-## API Rate Limits
-
-### Gemini API (Free Tier)
-- 60 requests per minute
-- 1,500 requests per day
-- Season simulation uses 1 request
+## Data Source Limits
 
 ### Wikipedia
 - Be respectful with scraping
@@ -141,14 +153,10 @@ This is normal for older seasons (pre-2000s) or if Wikipedia has limited content
 
 ## Cost Estimation
 
-### Free Tier Usage
-- ✅ Gemini: FREE (within limits)
+### Local Setup Usage
+- ✅ Ollama (local): No API key cost
 - ✅ Wikipedia: FREE
 - ✅ ChromaDB: FREE (local storage)
-
-### If Upgrading
-- Gemini Pro: $0.00025 per 1K characters
-- Average season simulation: ~5K characters = $0.00125
 
 ## Advanced Configuration
 
@@ -164,10 +172,10 @@ Edit in `season_simulator.py`:
 image_urls = simulator.scrape_season_images(season_year, max_images=10)
 ```
 
-### Different AI Model
-Edit in `season_simulator.py`:
+### Change Fixed AI Model (Optional)
+Edit `FIXED_OLLAMA_MODEL` in `main.py`:
 ```python
-self.model = genai.GenerativeModel('gemini-1.5-pro')  # More powerful
+FIXED_OLLAMA_MODEL = "llama3.1:8b"
 ```
 
 ## File Structure
@@ -177,8 +185,8 @@ F1_adjusted/
 ├── main.py                  # FastAPI backend with new endpoint
 ├── season_simulator.py      # NEW: AI simulation logic
 ├── requirements.txt         # Updated with new packages
-├── .env.example            # API key template
-├── .env                    # Your actual API key (gitignored)
+├── docker-compose.ollama.yml  # Ollama container setup
+├── .env                    # Optional Ollama config (gitignored)
 ├── .gitignore             # Ignores .env and exports/
 ├── exports/               # Generated PDFs stored here
 │   └── README.md
@@ -188,10 +196,10 @@ F1_adjusted/
 
 ## Security Notes
 
-⚠️ **Never commit your .env file or API keys to version control!**
+⚠️ **Never commit your .env file or secrets to version control!**
 
 - `.env` is in `.gitignore`
-- API keys can also be entered at runtime
+- Model is fixed in backend code (no user override from UI)
 - Consider using environment variables in production
 
 ## Support
@@ -199,7 +207,7 @@ F1_adjusted/
 If you encounter issues:
 1. Check the console output for detailed error messages
 2. Verify all dependencies are installed
-3. Ensure your Gemini API key is valid
+3. Ensure Ollama is reachable and model is pulled
 4. Check that CSV files are in the correct location
 
-Enjoy generating AI-powered F1 season reports! 🏎️✨
+Enjoy generating AI-powered F1 season reports with local Ollama!

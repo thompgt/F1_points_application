@@ -1,14 +1,12 @@
 """
-Season Simulator - Uses RAG, Gemini AI, and web scraping to generate season summaries
+Season Simulator - Uses RAG, Ollama, and web scraping to generate season summaries.
 """
 import os
 import io
 import requests
 from bs4 import BeautifulSoup
 import wikipediaapi
-import google.generativeai as genai
 import chromadb
-from chromadb.utils import embedding_functions
 from typing import List, Dict, Optional
 from PIL import Image
 from reportlab.lib.pagesizes import letter, A4
@@ -25,10 +23,10 @@ import json
 chroma_client = chromadb.Client()
 
 class SeasonSimulator:
-    def __init__(self, gemini_api_key: str):
-        """Initialize the season simulator with Gemini API key"""
-        genai.configure(api_key=gemini_api_key)
-        self.model = genai.GenerativeModel('gemini-pro')
+    def __init__(self, ollama_base_url: str, ollama_model: str):
+        """Initialize the season simulator with Ollama settings."""
+        self.ollama_base_url = ollama_base_url.rstrip('/')
+        self.ollama_model = ollama_model
         self.wiki = wikipediaapi.Wikipedia(
             language='en',
             user_agent='F1PointsCalculator/1.0'
@@ -151,12 +149,12 @@ class SeasonSimulator:
             print(f"Error downloading image: {e}")
             return None
     
-    def generate_season_summary(self, 
+    def generate_season_summary(self,
                                season_year: int, 
                                standings_data: Dict,
                                points_system: str,
                                wikipedia_context: str) -> str:
-        """Generate AI summary using Gemini"""
+        """Generate AI summary using Ollama."""
         try:
             # Prepare standings text
             top_drivers = standings_data['standings'][:10]
@@ -184,8 +182,23 @@ Please provide:
 
 Write in an engaging, informative style suitable for a professional report."""
 
-            response = self.model.generate_content(prompt)
-            return response.text
+            response = requests.post(
+                f"{self.ollama_base_url}/api/generate",
+                json={
+                    "model": self.ollama_model,
+                    "prompt": prompt,
+                    "stream": False
+                },
+                timeout=180
+            )
+            if response.status_code != 200:
+                raise RuntimeError(f"Ollama returned status {response.status_code}: {response.text[:300]}")
+
+            data = response.json()
+            text = data.get('response', '').strip()
+            if not text:
+                raise RuntimeError("Ollama returned empty response")
+            return text
         except Exception as e:
             print(f"Error generating summary: {e}")
             return f"Error generating AI summary. Basic info: {season_year} F1 season with {len(standings_data['standings'])} drivers."
@@ -343,7 +356,8 @@ def simulate_season(season_year: int,
                    standings_data: Dict,
                    points_system_name: str,
                    chart_json_strings: Dict,
-                   gemini_api_key: str,
+                   ollama_base_url: str,
+                   ollama_model: str,
                    output_dir: str = "exports") -> Optional[str]:
     """
     Main function to simulate season and generate PDF
@@ -353,7 +367,8 @@ def simulate_season(season_year: int,
         standings_data: Dictionary containing standings information
         points_system_name: Name of the points system used
         chart_json_strings: Dictionary with chart JSONs
-        gemini_api_key: Gemini API key
+        ollama_base_url: Ollama HTTP base URL (e.g. http://localhost:11434)
+        ollama_model: Ollama model name (e.g. llama3.1:8b)
         output_dir: Directory to save the PDF
     
     Returns:
@@ -364,14 +379,14 @@ def simulate_season(season_year: int,
         os.makedirs(output_dir, exist_ok=True)
         
         # Initialize simulator
-        simulator = SeasonSimulator(gemini_api_key)
+        simulator = SeasonSimulator(ollama_base_url, ollama_model)
         
         # Fetch Wikipedia context
         print(f"Fetching Wikipedia data for {season_year}...")
         wikipedia_context = simulator.query_season_context(season_year)
         
         # Generate AI summary
-        print("Generating AI summary with Gemini...")
+        print("Generating AI summary with Ollama...")
         ai_summary = simulator.generate_season_summary(
             season_year, 
             standings_data, 

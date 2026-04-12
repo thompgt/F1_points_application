@@ -663,12 +663,12 @@
                                     <div id="cumulativeChart"></div>
                                 </div>
                                 <div class="chart-container">
-                                    <h4><i class="fas fa-chart-bar"></i> Points Distribution</h4>
-                                    <div id="distributionChart"></div>
-                                </div>
-                                <div class="chart-container">
                                     <h4><i class="fas fa-industry"></i> Constructors Cumulative Points</h4>
                                     <div id="constructorsCumulativeChart"></div>
+                                </div>
+                                <div class="chart-container">
+                                    <h4><i class="fas fa-chart-bar"></i> Points Distribution</h4>
+                                    <div id="distributionChart"></div>
                                 </div>
                             </div>
 
@@ -1328,13 +1328,6 @@
                 return;
             }
 
-            // Prompt for Gemini API key
-            const apiKey = prompt('Enter your Gemini API Key (or set GEMINI_API_KEY environment variable):');
-            if (!apiKey || apiKey.trim() === '') {
-                showAlert('Gemini API key is required to generate season simulation', 'warning');
-                return;
-            }
-
             // Determine points array
             let pointsArray = null;
             if (pointsSystem === 'custom') {
@@ -1365,8 +1358,7 @@
                     },
                     body: JSON.stringify({
                         season_year: parseInt(season),
-                        points_system: pointsArray,
-                        gemini_api_key: apiKey
+                        points_system: pointsArray
                     })
                 });
 

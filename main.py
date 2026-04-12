@@ -102,9 +102,10 @@ add_middleware_stack(app, {
 app.include_router(health_router)
 
 # Mount static files and templates
-app.mount("/static", StaticFiles(directory="static"), name="static")
+#app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 DEFAULT_POINTS = [25, 18, 15, 12, 10, 8, 6, 4, 2, 1]
+FIXED_OLLAMA_MODEL = "llama3.1:8b"
 
 # Note: Request models (StandingsRequest, SimulateSeasonRequest, etc.) are now in validators.py
 
@@ -485,18 +486,18 @@ def create_race_results_timeline_chart(adjusted_results_with_races, season_year,
 @app.get("/", response_class=HTMLResponse)
 async def read_root(request: Request):
     """Serve the main page"""
-    return templates.TemplateResponse("index.html", {"request": request})
+    return templates.TemplateResponse(request, "index.html", {"request": request})
 
 
 @app.get('/head-to-head', response_class=HTMLResponse)
 async def head_to_head(request: Request):
     """Serve the head-to-head comparison page"""
-    return templates.TemplateResponse('head_to_head.html', {"request": request})
+    return templates.TemplateResponse(request, 'head_to_head.html', {"request": request})
 
 
 @app.get('/race-detail', response_class=HTMLResponse)
 async def race_detail(request: Request):
-    return templates.TemplateResponse('race_detail.html', {"request": request})
+    return templates.TemplateResponse(request, 'race_detail.html', {"request": request})
 
 @app.get("/api/seasons")
 async def get_seasons():
@@ -782,8 +783,10 @@ async def get_drivers(
 
 @app.get('/api/head-to-head')
 async def api_head_to_head(driver1_id: int, driver2_id: int, season: Optional[int] = None, mode: Optional[str] = 'season'):
-    """Return head-to-head statistics for two drivers. Mode: 'season' or 'career'"""
+    """Return season head-to-head statistics for two drivers."""
     try:
+        # Season-only mode (career comparisons disabled).
+        mode = 'season'
         results, races, drivers, seasons, constructors, _ = load_data()
 
         # Merge driver and race info
@@ -803,7 +806,7 @@ async def api_head_to_head(driver1_id: int, driver2_id: int, season: Optional[in
             df = df[df['year'] == int(season)].copy()
 
         # Try cache (Redis first, then SQLite)
-        cache_key = f"h2h:{driver1_id}:{driver2_id}:{season}:{mode}"
+        cache_key = f"h2h:v2:{driver1_id}:{driver2_id}:{season}:{mode}"
         if REDIS_CLIENT:
             cached = REDIS_CLIENT.get(cache_key)
             if cached:
@@ -816,7 +819,16 @@ async def api_head_to_head(driver1_id: int, driver2_id: int, season: Optional[in
             db = SessionLocal()
             q = db.query(HeadToHeadCache).filter_by(driver1_id=driver1_id, driver2_id=driver2_id, season=season, mode=mode).order_by(HeadToHeadCache.created_at.desc()).first()
             if q and q.response_json:
-                return json.loads(q.response_json)
+                cached_payload = json.loads(q.response_json)
+                # Ignore stale cache rows produced before the newer head-to-head schema.
+                if (
+                    isinstance(cached_payload, dict)
+                    and 'driver1_stats' in cached_payload
+                    and isinstance(cached_payload['driver1_stats'], dict)
+                    and 'avg_finish' in cached_payload['driver1_stats']
+                    and 'radar_scores' in cached_payload['driver1_stats']
+                ):
+                    return cached_payload
         except Exception:
             pass
 
@@ -857,12 +869,90 @@ async def api_head_to_head(driver1_id: int, driver2_id: int, season: Optional[in
 
             # Grid stats (rounded to nearest tenth)
             avg_grid = None
-            median_grid = None
+            avg_quali = None
             if 'grid' in d.columns and not d['grid'].dropna().empty:
                 grids = d['grid'].replace(0, pd.NA).dropna().astype(float)
                 if not grids.empty:
                     avg_grid = round(float(grids.mean()), 1)
-                    median_grid = round(float(grids.median()), 1)
+                    avg_quali = round(float(grids.mean()), 1)
+
+            # Average finish and consistency metrics
+            avg_finish = None
+            finish_variance = None
+            if 'positionOrder' in d.columns and not d['positionOrder'].dropna().empty:
+                finishes = d['positionOrder'].dropna().astype(float)
+                if not finishes.empty:
+                    avg_finish = round(float(finishes.mean()), 2)
+                    finish_variance = round(float(finishes.var(ddof=0)), 3)
+
+            # Net positions gained (grid - finish); positive is better
+            net_positions_gained = None
+            try:
+                nets = []
+                for _, rr in d.iterrows():
+                    g = rr.get('grid')
+                    p = rr.get('positionOrder')
+                    if pd.notna(g) and pd.notna(p):
+                        g = float(g)
+                        p = float(p)
+                        if g > 0:
+                            nets.append(g - p)
+                if nets:
+                    net_positions_gained = round(float(pd.Series(nets).mean()), 3)
+            except Exception:
+                net_positions_gained = None
+
+            # Teammate comparison metrics
+            teammate_race_count = 0
+            outqualified_by_5 = 0
+            outraced_by_5 = 0
+            teammate_points_driver = 0.0
+            teammate_points_peer = 0.0
+            if 'constructorId' in d.columns and 'raceId' in d.columns:
+                for _, row in d.iterrows():
+                    race_id = row.get('raceId')
+                    constructor = row.get('constructorId')
+                    if pd.isna(race_id) or pd.isna(constructor):
+                        continue
+                    peers = df[(df['raceId'] == race_id) & (df['constructorId'] == constructor) & (df['driverId'] != driver_id)]
+                    if peers.empty:
+                        continue
+                    peer = peers.iloc[0]
+                    teammate_race_count += 1
+
+                    g_self = row.get('grid')
+                    g_peer = peer.get('grid')
+                    if pd.notna(g_self) and pd.notna(g_peer) and float(g_self) > 0 and float(g_peer) > 0:
+                        if (float(g_self) - float(g_peer)) >= 5:
+                            outqualified_by_5 += 1
+
+                    p_self = row.get('positionOrder')
+                    p_peer = peer.get('positionOrder')
+                    if pd.notna(p_self) and pd.notna(p_peer):
+                        if (float(p_self) - float(p_peer)) >= 5:
+                            outraced_by_5 += 1
+
+                    try:
+                        teammate_points_driver += float(row.get('adjusted_points') or 0.0)
+                    except Exception:
+                        pass
+                    try:
+                        teammate_points_peer += float(peer.get('adjusted_points') or 0.0)
+                    except Exception:
+                        pass
+
+            teammate_points_pct = None
+            denom = teammate_points_driver + teammate_points_peer
+            if denom > 0:
+                teammate_points_pct = round((teammate_points_driver / denom) * 100.0, 2)
+
+            # Clutchness score requested by user
+            race_count = int(len(d)) if len(d) else 0
+            dnf_rate = (dnfs / race_count * 100.0) if race_count > 0 else 0.0
+            teammate_rate_base = teammate_race_count if teammate_race_count > 0 else 1
+            outqualified_by_5_rate = (outqualified_by_5 / teammate_rate_base) * 100.0
+            outraced_by_5_rate = (outraced_by_5 / teammate_rate_base) * 100.0
+            clutchness = round(max(0.0, 100.0 - (0.50 * dnf_rate + 0.25 * outqualified_by_5_rate + 0.25 * outraced_by_5_rate)), 2)
 
             # Average qualifying gap to teammate: try fastf1 (qualifying lap-time gap) otherwise fallback to grid difference
             avg_grid_gap = None
@@ -942,12 +1032,51 @@ async def api_head_to_head(driver1_id: int, driver2_id: int, season: Optional[in
                 'total_points': total_points,
                 'dnfs': dnfs,
                 'avg_grid': avg_grid,
-                'median_grid': median_grid,
+                'avg_quali': avg_quali,
+                'avg_finish': avg_finish,
+                'net_positions_gained': net_positions_gained,
+                'finish_variance': finish_variance,
+                'teammate_points_pct': teammate_points_pct,
+                'outqualified_by_5': outqualified_by_5,
+                'outraced_by_5': outraced_by_5,
+                'clutchness': clutchness,
                 'avg_grid_gap_to_teammate': avg_grid_gap
             }
 
         driver1_stats = compute_stats(driver1_id)
         driver2_stats = compute_stats(driver2_id)
+
+        def clamp01(v):
+            return max(0.0, min(100.0, float(v)))
+
+        def score_avg_position(v):
+            if v is None:
+                return 50.0
+            return clamp01(((21.0 - float(v)) / 20.0) * 100.0)
+
+        def score_net_positions(v):
+            if v is None:
+                return 50.0
+            return clamp01(((float(v) + 10.0) / 20.0) * 100.0)
+
+        def score_consistency(variance):
+            if variance is None:
+                return 50.0
+            # Lower variance is better; 0 variance => 100.
+            return clamp01(100.0 - (min(float(variance), 25.0) / 25.0) * 100.0)
+
+        def build_radar_scores(stats):
+            return {
+                'Avg Finish (Race Pace)': round(score_avg_position(stats.get('avg_finish')), 2),
+                'Avg Quali (Raw Pace)': round(score_avg_position(stats.get('avg_quali')), 2),
+                'Net Positions Gained (Race Craft)': round(score_net_positions(stats.get('net_positions_gained')), 2),
+                'Consistency (Low Variance)': round(score_consistency(stats.get('finish_variance')), 2),
+                'Teammate Dominance (%)': round(clamp01(stats.get('teammate_points_pct') if stats.get('teammate_points_pct') is not None else 50.0), 2),
+                'Clutchness': round(clamp01(stats.get('clutchness') if stats.get('clutchness') is not None else 50.0), 2)
+            }
+
+        driver1_stats['radar_scores'] = build_radar_scores(driver1_stats)
+        driver2_stats['radar_scores'] = build_radar_scores(driver2_stats)
 
         # Race-by-race comparison
         race_list = []
@@ -964,19 +1093,30 @@ async def api_head_to_head(driver1_id: int, driver2_id: int, season: Optional[in
             row2 = df[(df['raceId'] == rid) & (df['driverId'] == int(driver2_id))]
             pos1 = int(row1.iloc[0]['positionOrder']) if not row1.empty and not pd.isna(row1.iloc[0].get('positionOrder')) else None
             pos2 = int(row2.iloc[0]['positionOrder']) if not row2.empty and not pd.isna(row2.iloc[0].get('positionOrder')) else None
-            # Determine winner if both finished
+            constructor1 = row1.iloc[0].get('constructor_name') if not row1.empty else None
+            constructor2 = row2.iloc[0].get('constructor_name') if not row2.empty else None
+            grid1 = int(row1.iloc[0]['grid']) if not row1.empty and not pd.isna(row1.iloc[0].get('grid')) and float(row1.iloc[0].get('grid')) > 0 else None
+            grid2 = int(row2.iloc[0]['grid']) if not row2.empty and not pd.isna(row2.iloc[0].get('grid')) and float(row2.iloc[0].get('grid')) > 0 else None
+
+            # Determine race winner if both finished
             winner = None
+            winner_driver = None
             if pos1 and pos2:
                 if pos1 < pos2:
                     winner = driver1_stats['driver_name']
+                    winner_driver = 'driver1'
                 elif pos2 < pos1:
                     winner = driver2_stats['driver_name']
+                    winner_driver = 'driver2'
                 else:
                     winner = 'Tie'
+                    winner_driver = 'tie'
             elif pos1 and not pos2:
                 winner = driver1_stats['driver_name']
+                winner_driver = 'driver1'
             elif pos2 and not pos1:
                 winner = driver2_stats['driver_name']
+                winner_driver = 'driver2'
             # Compute margin in seconds if finish time milliseconds available for both
             margin = None
             try:
@@ -988,13 +1128,48 @@ async def api_head_to_head(driver1_id: int, driver2_id: int, season: Optional[in
             except Exception:
                 margin = None
 
+            # Determine quali winner and margin in grid places
+            quali_winner = None
+            quali_winner_driver = None
+            quali_margin = None
+            if grid1 and grid2:
+                if grid1 < grid2:
+                    quali_winner = driver1_stats['driver_name']
+                    quali_winner_driver = 'driver1'
+                elif grid2 < grid1:
+                    quali_winner = driver2_stats['driver_name']
+                    quali_winner_driver = 'driver2'
+                else:
+                    quali_winner = 'Tie'
+                    quali_winner_driver = 'tie'
+                quali_margin = abs(grid1 - grid2)
+            elif grid1 and not grid2:
+                quali_winner = driver1_stats['driver_name']
+                quali_winner_driver = 'driver1'
+            elif grid2 and not grid1:
+                quali_winner = driver2_stats['driver_name']
+                quali_winner_driver = 'driver2'
+
             race_list.append({
                 'round': round_val,
                 'race_name': race_name,
+                'driver1_race_position': pos1,
+                'driver2_race_position': pos2,
+                'driver1_quali_position': grid1,
+                'driver2_quali_position': grid2,
                 'driver1_position': pos1,
                 'driver2_position': pos2,
+                'driver1_constructor': constructor1,
+                'driver2_constructor': constructor2,
                 'winner': winner,
-                'margin': margin
+                'winner_driver': winner_driver,
+                'winner_race': winner,
+                'winner_driver_race': winner_driver,
+                'margin': margin,
+                'race_margin_seconds': margin,
+                'winner_quali': quali_winner,
+                'winner_driver_quali': quali_winner_driver,
+                'quali_margin_positions': quali_margin
             })
 
         # Build cumulative chart JSON for the two drivers using existing function
@@ -1125,14 +1300,9 @@ async def simulate_season_endpoint(request: SimulateSeasonRequest):
     Generate AI-powered season summary with RAG, web scraping, and PDF export
     """
     try:
-        # Get Gemini API key from request or environment
-        gemini_api_key = request.gemini_api_key or os.getenv('GEMINI_API_KEY')
-        
-        if not gemini_api_key:
-            raise HTTPException(
-                status_code=400, 
-                detail="Gemini API key required. Set GEMINI_API_KEY environment variable or provide in request."
-            )
+        # Ollama settings (local model server)
+        ollama_base_url = os.getenv('OLLAMA_BASE_URL', 'http://localhost:11434')
+        ollama_model = FIXED_OLLAMA_MODEL
         
         # Get points system
         if request.points_system is None:
@@ -1219,7 +1389,8 @@ async def simulate_season_endpoint(request: SimulateSeasonRequest):
             standings_data=standings_data,
             points_system_name=points_system_name,
             chart_json_strings=chart_json_strings,
-            gemini_api_key=gemini_api_key,
+            ollama_base_url=ollama_base_url,
+            ollama_model=ollama_model,
             output_dir="exports"
         )
         

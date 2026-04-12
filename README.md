@@ -14,7 +14,7 @@ A full-stack web application that allows users to calculate Formula 1 driver sta
   - Cumulative points chart showing how drivers' points evolved throughout the season
   - Points distribution bar chart for the top 15 drivers
 - **AI-Powered Season Simulation** (NEW!):
-  - Generate comprehensive season reports with Gemini AI
+   - Generate comprehensive season reports with local Ollama
   - RAG (Retrieval Augmented Generation) using Wikipedia data
   - Web scraping for season images with Beautiful Soup
   - Export detailed PDF reports with charts, images, and AI analysis
@@ -30,10 +30,18 @@ A full-stack web application that allows users to calculate Formula 1 driver sta
    pip install -r requirements.txt
    ```
 
-3. **Set up Gemini API Key** (for AI Season Simulation):
-   - Get your API key from [Google AI Studio](https://makersuite.google.com/app/apikey)
-   - Copy `.env.example` to `.env`
-   - Add your API key: `GEMINI_API_KEY=your_key_here`
+3. **Set up Ollama (for AI Season Simulation)**:
+    - Model used by this app is fixed to: `llama3.1:8b`
+    - Local install option:
+       - Install Ollama from https://ollama.com/download
+       - Pull model: `ollama pull llama3.1:8b`
+       - Verify server: `curl http://localhost:11434/api/tags`
+    - Docker option:
+       - Run: `docker compose -f docker-compose.ollama.yml up -d`
+       - Pull model: `docker exec -it ollama ollama pull llama3.1:8b`
+       - Verify server: `curl http://localhost:11434/api/tags`
+    - Optional env config:
+       - `OLLAMA_BASE_URL=http://localhost:11434`
 
 4. **Ensure you have the required CSV files**:
    - `results.csv` - Race results data
@@ -65,7 +73,7 @@ A full-stack web application that allows users to calculate Formula 1 driver sta
 
 6. **Generate AI Season Report** (Optional):
    - Click "Simulate Season" button
-   - Enter your Gemini API key when prompted (or set in `.env`)
+   - No model selection is required (app uses `llama3.1:8b`)
    - Wait 30-60 seconds for the AI to generate a comprehensive report
    - PDF will download automatically with:
      - AI-generated season summary and analysis
@@ -80,7 +88,7 @@ A full-stack web application that allows users to calculate Formula 1 driver sta
 - `GET /api/seasons` - Get all available seasons
 - `POST /api/calculate-standings` - Calculate standings for a season with specified points system
 - `GET /api/points-systems` - Get predefined points systems
-- `POST /api/simulate-season` - Generate AI-powered season simulation PDF (requires Gemini API key)
+- `POST /api/simulate-season` - Generate AI-powered season simulation PDF (uses Ollama)
 
 ## Example API Usage
 
@@ -117,7 +125,7 @@ The application uses historical F1 data from CSV files containing:
 - **Styling**: Bootstrap 5, Custom CSS
 - **Visualizations**: Plotly.js
 - **Data Processing**: Pandas
-- **AI/ML**: Google Gemini API, ChromaDB (Vector Database), RAG
+- **AI/ML**: Ollama, ChromaDB (Vector Database), RAG
 - **Web Scraping**: Beautiful Soup, Requests, Wikipedia API
 - **PDF Generation**: ReportLab, Kaleido
 - **Icons**: Font Awesome

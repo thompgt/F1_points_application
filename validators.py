@@ -101,23 +101,6 @@ class SimulateSeasonRequest(BaseModel):
         max_length=MAX_CUSTOM_POINTS_LENGTH,
         description="Custom points system array"
     )
-    gemini_api_key: Optional[str] = Field(
-        default=None,
-        min_length=10,
-        max_length=200,
-        description="Gemini API key for AI generation (should be provided server-side in production)"
-    )
-
-    @field_validator('gemini_api_key')
-    @classmethod
-    def validate_api_key(cls, v: Optional[str]) -> Optional[str]:
-        if v is None:
-            return v
-        # Basic format check - should look like an API key
-        v = v.strip()
-        if not re.match(r'^[A-Za-z0-9_-]+$', v):
-            raise ValueError("Invalid API key format")
-        return v
 
 
 class RaceResultsRequest(BaseModel):

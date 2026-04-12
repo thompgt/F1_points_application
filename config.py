@@ -42,8 +42,8 @@ class Settings:
         cors_origins = os.getenv("CORS_ORIGINS", "*")
         self.CORS_ORIGINS: List[str] = [origin.strip() for origin in cors_origins.split(",")]
         
-        # API Keys (for external services)
-        self.GEMINI_API_KEY: Optional[str] = os.getenv("GEMINI_API_KEY")
+        # AI Model Server (Ollama)
+        self.OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
         
         # Logging
         self.LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
@@ -129,8 +129,9 @@ ENV_DOCS = """
 - CORS_ORIGINS: Comma-separated list of allowed origins (default: "*")
   Example: "http://localhost:3000,https://myapp.com"
 
-## API Keys
-- GEMINI_API_KEY: Google Gemini API key for AI features (default: None)
+## AI Model Server (Ollama)
+- OLLAMA_BASE_URL: Ollama server URL (default: "http://localhost:11434")
+- Fixed model: llama3.1:8b (selected in application code)
 
 ## Logging
 - LOG_LEVEL: Logging level - DEBUG, INFO, WARNING, ERROR (default: "INFO")
