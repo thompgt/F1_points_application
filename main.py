@@ -74,6 +74,9 @@ API_VERSION = os.getenv("API_VERSION", "1.0.0")
 ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
 ENABLE_RATE_LIMITING = os.getenv("ENABLE_RATE_LIMITING", "true").lower() == "true"
 CORS_ORIGINS = os.getenv("CORS_ORIGINS", "*").split(",")
+# Wildcard origins + credentials is invalid per the CORS spec (and a security
+# smell) -- only allow credentialed requests when explicit origins are set.
+CORS_ALLOW_CREDENTIALS = "*" not in CORS_ORIGINS
 
 app = FastAPI(
     title="F1 Points Calculator",
@@ -88,7 +91,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ORIGINS,
-    allow_credentials=True,
+    allow_credentials=CORS_ALLOW_CREDENTIALS,
     allow_methods=["GET", "POST", "PUT", "DELETE"],
     allow_headers=["*"],
 )
