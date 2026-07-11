@@ -224,11 +224,12 @@
                 });
 
                 // Create Chart
+                // API response uses `position`, not `positionOrder`.
                 const chartData = results
-                    .filter(r => r.positionOrder)
+                    .filter(r => r.position)
                     .map(r => ({
-                        name: `${r.forename[0]}. ${r.surname}`,
-                        pos: r.positionOrder
+                        name: `${(r.forename || '?')[0]}. ${r.surname || ''}`,
+                        pos: r.position
                     }))
                     .reverse();
 
