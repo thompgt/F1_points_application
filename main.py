@@ -73,6 +73,10 @@ logger = get_logger()
 API_VERSION = os.getenv("API_VERSION", "1.0.0")
 ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
 ENABLE_RATE_LIMITING = os.getenv("ENABLE_RATE_LIMITING", "true").lower() == "true"
+# fastf1 fetches qualifying telemetry over the network per driver pair per
+# race -- opt-in only, since it can make /api/head-to-head slow/flaky in
+# production if left on by default just because the package is installed.
+ENABLE_FASTF1_QUALI_GAP = os.getenv("ENABLE_FASTF1_QUALI_GAP", "false").lower() == "true"
 CORS_ORIGINS = os.getenv("CORS_ORIGINS", "*").split(",")
 # Wildcard origins + credentials is invalid per the CORS spec (and a security
 # smell) -- only allow credentialed requests when explicit origins are set.
@@ -974,7 +978,7 @@ async def api_head_to_head(driver1_id: int, driver2_id: int, season: Optional[in
                     peer = peers.iloc[0]
 
                     qual_gap_found = False
-                    if FASTF1_AVAILABLE:
+                    if FASTF1_AVAILABLE and ENABLE_FASTF1_QUALI_GAP:
                         try:
                             race_row = races[races['raceId'] == race_id]
                             if race_row.empty:

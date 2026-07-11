@@ -116,6 +116,7 @@ All variables have sensible defaults for local development; set these in a `.env
 | `RATE_LIMIT_BURST` | `10` | Max requests per second per client |
 | `CORS_ORIGINS` | `*` | Comma-separated allowed origins. Credentials are only enabled on non-wildcard origins |
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | Local Ollama server used by `/api/simulate-season` |
+| `ENABLE_FASTF1_QUALI_GAP` | `false` | Opt-in: fetch per-driver-pair qualifying telemetry via the `fastf1` package for `/api/head-to-head`. Adds real network calls to an external timing API and can slow down responses |
 
 ## Example API Usage
 
