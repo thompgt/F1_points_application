@@ -77,7 +77,8 @@ class Settings:
         """Get the database URL with driver adjustments."""
         url = self.DATABASE_URL
         if url.startswith('postgres://'):
-            url = url.replace('postgres://', 'postgresql+psycopg2://', 1)
+            # requirements.txt installs psycopg3 (psycopg[binary]), not psycopg2
+            url = url.replace('postgres://', 'postgresql+psycopg://', 1)
         return url
 
 

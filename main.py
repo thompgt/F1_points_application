@@ -1,3 +1,11 @@
+import os
+from dotenv import load_dotenv
+
+# Load environment variables before importing local modules (e.g. db.py) that
+# read them at import time -- otherwise a .env-defined DATABASE_URL etc. is
+# silently ignored.
+load_dotenv()
+
 from fastapi import FastAPI, HTTPException, Query
 from fastapi import Depends
 from fastapi.staticfiles import StaticFiles
@@ -21,8 +29,6 @@ import plotly.io as pio
 from typing import List, Optional
 import warnings
 from functools import lru_cache
-import os
-from dotenv import load_dotenv
 from season_simulator import simulate_season
 from db import init_db, HeadToHeadCache, SessionLocal
 import sqlalchemy
@@ -57,9 +63,6 @@ if REDIS_AVAILABLE:
         REDIS_CLIENT.ping()
     except Exception:
         REDIS_CLIENT = None
-
-# Load environment variables
-load_dotenv()
 
 warnings.filterwarnings("ignore")
 

@@ -8,8 +8,8 @@ DATABASE_URL = os.getenv('DATABASE_URL') or os.getenv('CACHE_DB_URL') or 'sqlite
 
 # If using Postgres on platforms like Supabase, ensure SSL requirement is preserved
 if DATABASE_URL.startswith('postgres://'):
-    # SQLAlchemy prefers postgresql+psycopg
-    DATABASE_URL = DATABASE_URL.replace('postgres://', 'postgresql+psycopg2://', 1)
+    # requirements.txt installs psycopg3 (psycopg[binary]), not psycopg2
+    DATABASE_URL = DATABASE_URL.replace('postgres://', 'postgresql+psycopg://', 1)
 
 connect_args = {}
 if DATABASE_URL.startswith('sqlite'):
