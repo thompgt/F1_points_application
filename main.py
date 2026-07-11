@@ -620,13 +620,14 @@ async def get_races(
         _, races_csv, _, _, _, _ = load_data()
         # Try DB first
         db = SessionLocal()
-        db_races = db.query(Race).filter_by(round=season).all()
+        db_races = db.query(Race).filter_by(year=season).order_by(Race.round).all()
         db.close()
         if db_races:
             race_list = [
                 {
                     "raceId": r.raceId,
                     "name": r.name,
+                    "year": r.year,
                     "round": r.round,
                     "date": r.date,
                     "circuitId": r.circuitId
@@ -644,6 +645,7 @@ async def get_races(
             race_list.append({
                 "raceId": int(race['raceId']),
                 "name": race.get('name', ''),
+                "year": season,
                 "round": int(race['round']) if 'round' in race and pd.notna(race['round']) else None,
                 "date": str(race.get('date', '')) if pd.notna(race.get('date')) else None,
                 "circuitId": int(race['circuitId']) if 'circuitId' in race and pd.notna(race['circuitId']) else None
