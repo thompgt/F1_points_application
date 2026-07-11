@@ -7,6 +7,11 @@ Usage:
 This script reads from the local SQLite file (cache.db) and inserts into Postgres using same SQLAlchemy models.
 """
 import os
+from dotenv import load_dotenv
+
+# Load .env before importing db, which reads DATABASE_URL at import time
+load_dotenv()
+
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from db import Base, HeadToHeadCache
@@ -16,7 +21,8 @@ SRC_DB = os.getenv('SRC_DB_URL', 'sqlite:///cache.db')
 # Target (Postgres / Supabase)
 DST_DB = os.getenv('DATABASE_URL') or os.getenv('CACHE_DB_URL')
 if DST_DB and DST_DB.startswith('postgres://'):
-    DST_DB = DST_DB.replace('postgres://', 'postgresql+psycopg2://', 1)
+    # requirements.txt installs psycopg3 (psycopg[binary]), not psycopg2
+    DST_DB = DST_DB.replace('postgres://', 'postgresql+psycopg://', 1)
 
 if not DST_DB:
     raise SystemExit('Set DATABASE_URL to your Supabase Postgres connection string')

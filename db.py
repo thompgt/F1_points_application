@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime
+from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, inspect
 from sqlalchemy.orm import declarative_base, sessionmaker
 from sqlalchemy.sql import func
 import os
@@ -8,8 +8,8 @@ DATABASE_URL = os.getenv('DATABASE_URL') or os.getenv('CACHE_DB_URL') or 'sqlite
 
 # If using Postgres on platforms like Supabase, ensure SSL requirement is preserved
 if DATABASE_URL.startswith('postgres://'):
-    # SQLAlchemy prefers postgresql+psycopg
-    DATABASE_URL = DATABASE_URL.replace('postgres://', 'postgresql+psycopg2://', 1)
+    # requirements.txt installs psycopg3 (psycopg[binary]), not psycopg2
+    DATABASE_URL = DATABASE_URL.replace('postgres://', 'postgresql+psycopg://', 1)
 
 connect_args = {}
 if DATABASE_URL.startswith('sqlite'):
@@ -34,6 +34,7 @@ class Race(Base):
     id = Column(Integer, primary_key=True, index=True)
     raceId = Column(Integer, index=True, unique=True)
     name = Column(String(128))
+    year = Column(Integer, index=True)
     round = Column(Integer)
     date = Column(String(32))
     circuitId = Column(Integer)
@@ -49,6 +50,7 @@ def store_races(race_list):
                 db.add(Race(
                     raceId=race['raceId'],
                     name=race.get('name',''),
+                    year=race.get('year'),
                     round=race.get('round'),
                     date=race.get('date',''),
                     circuitId=race.get('circuitId')
@@ -67,6 +69,16 @@ class RaceTelemetry(Base):
 
 
 def init_db():
+    # races_db previously had no `year` column (a prior bug queried it by
+    # `round`, which meant the cache never matched). create_all() won't add
+    # columns to an already-existing table, so drop and let it recreate --
+    # this table is purely a cache repopulated from the CSVs on demand.
+    inspector = inspect(engine)
+    if inspector.has_table(Race.__tablename__):
+        existing_columns = {col['name'] for col in inspector.get_columns(Race.__tablename__)}
+        if 'year' not in existing_columns:
+            Race.__table__.drop(bind=engine)
+
     Base.metadata.create_all(bind=engine)
 
 def get_db():

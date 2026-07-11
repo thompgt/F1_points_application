@@ -1,3 +1,11 @@
+import os
+from dotenv import load_dotenv
+
+# Load environment variables before importing local modules (e.g. db.py) that
+# read them at import time -- otherwise a .env-defined DATABASE_URL etc. is
+# silently ignored.
+load_dotenv()
+
 from fastapi import FastAPI, HTTPException, Query
 from fastapi import Depends
 from fastapi.staticfiles import StaticFiles
@@ -21,8 +29,6 @@ import plotly.io as pio
 from typing import List, Optional
 import warnings
 from functools import lru_cache
-import os
-from dotenv import load_dotenv
 from season_simulator import simulate_season
 from db import init_db, HeadToHeadCache, SessionLocal
 import sqlalchemy
@@ -58,9 +64,6 @@ if REDIS_AVAILABLE:
     except Exception:
         REDIS_CLIENT = None
 
-# Load environment variables
-load_dotenv()
-
 warnings.filterwarnings("ignore")
 
 # Get logger instance
@@ -70,7 +73,14 @@ logger = get_logger()
 API_VERSION = os.getenv("API_VERSION", "1.0.0")
 ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
 ENABLE_RATE_LIMITING = os.getenv("ENABLE_RATE_LIMITING", "true").lower() == "true"
+# fastf1 fetches qualifying telemetry over the network per driver pair per
+# race -- opt-in only, since it can make /api/head-to-head slow/flaky in
+# production if left on by default just because the package is installed.
+ENABLE_FASTF1_QUALI_GAP = os.getenv("ENABLE_FASTF1_QUALI_GAP", "false").lower() == "true"
 CORS_ORIGINS = os.getenv("CORS_ORIGINS", "*").split(",")
+# Wildcard origins + credentials is invalid per the CORS spec (and a security
+# smell) -- only allow credentialed requests when explicit origins are set.
+CORS_ALLOW_CREDENTIALS = "*" not in CORS_ORIGINS
 
 app = FastAPI(
     title="F1 Points Calculator",
@@ -85,7 +95,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ORIGINS,
-    allow_credentials=True,
+    allow_credentials=CORS_ALLOW_CREDENTIALS,
     allow_methods=["GET", "POST", "PUT", "DELETE"],
     allow_headers=["*"],
 )
@@ -511,7 +521,8 @@ async def get_seasons():
             logger.debug(f"Seasons loaded count={len(season_list)}")
         return {"seasons": season_list}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception(f"Error loading seasons: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 @app.post("/api/calculate-standings")
 async def calculate_standings_api(request: StandingsRequest):
@@ -591,9 +602,12 @@ async def calculate_standings_api(request: StandingsRequest):
             "points_system": points_system,
             "points_system_name": points_system_name
         }
-        
+
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception(f"Error calculating standings: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 @app.get("/api/points-systems")
 async def get_points_systems():
@@ -617,13 +631,14 @@ async def get_races(
         _, races_csv, _, _, _, _ = load_data()
         # Try DB first
         db = SessionLocal()
-        db_races = db.query(Race).filter_by(round=season).all()
+        db_races = db.query(Race).filter_by(year=season).order_by(Race.round).all()
         db.close()
         if db_races:
             race_list = [
                 {
                     "raceId": r.raceId,
                     "name": r.name,
+                    "year": r.year,
                     "round": r.round,
                     "date": r.date,
                     "circuitId": r.circuitId
@@ -641,6 +656,7 @@ async def get_races(
             race_list.append({
                 "raceId": int(race['raceId']),
                 "name": race.get('name', ''),
+                "year": season,
                 "round": int(race['round']) if 'round' in race and pd.notna(race['round']) else None,
                 "date": str(race.get('date', '')) if pd.notna(race.get('date')) else None,
                 "circuitId": int(race['circuitId']) if 'circuitId' in race and pd.notna(race['circuitId']) else None
@@ -649,8 +665,8 @@ async def get_races(
         store_races(race_list)
         return {"races": race_list}
     except Exception as e:
-        logger.error(f"Error loading races: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception(f"Error loading races: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.post("/api/race-results")
@@ -750,8 +766,8 @@ async def get_race_results(request: RaceResultsRequest):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error loading race results: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception(f"Error loading race results: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.get("/api/drivers")
@@ -778,12 +794,18 @@ async def get_drivers(
         df = df.sort_values(by=['surname', 'forename'])
         return {"drivers": df[['driverId', 'forename', 'surname']].to_dict('records')}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception(f"Error loading drivers: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.get('/api/head-to-head')
 async def api_head_to_head(driver1_id: int, driver2_id: int, season: Optional[int] = None, mode: Optional[str] = 'season'):
     """Return season head-to-head statistics for two drivers."""
+    # This endpoint takes raw query params rather than the HeadToHeadRequest
+    # model, so its "can't compare a driver with themselves" validation
+    # never ran -- enforce it explicitly here instead.
+    if driver1_id == driver2_id:
+        raise HTTPException(status_code=422, detail="Cannot compare a driver with themselves")
     try:
         # Season-only mode (career comparisons disabled).
         mode = 'season'
@@ -961,7 +983,7 @@ async def api_head_to_head(driver1_id: int, driver2_id: int, season: Optional[in
                     peer = peers.iloc[0]
 
                     qual_gap_found = False
-                    if FASTF1_AVAILABLE:
+                    if FASTF1_AVAILABLE and ENABLE_FASTF1_QUALI_GAP:
                         try:
                             race_row = races[races['raceId'] == race_id]
                             if race_row.empty:
@@ -1225,7 +1247,8 @@ async def api_head_to_head(driver1_id: int, driver2_id: int, season: Optional[in
 
         return response
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception(f"Error computing head-to-head stats: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.get('/api/h2h-wikipedia')
@@ -1248,7 +1271,8 @@ async def api_h2h_wikipedia(driver1: int, driver2: int, season: Optional[int] = 
         summary = f"{brief(driver1)}\n\n{brief(driver2)}\n\nNote: This is an offline summary. For richer summaries, enable external Wikipedia fetch." 
         return {'summary': summary}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception(f"Error building h2h summary: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.get('/api/race/{race_id}')
@@ -1290,7 +1314,8 @@ async def api_race_detail(race_id: int):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception(f"Error loading race detail: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.post("/api/simulate-season")
@@ -1406,7 +1431,8 @@ async def simulate_season_endpoint(request: SimulateSeasonRequest):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error simulating season: {str(e)}")
+        logger.exception(f"Error simulating season: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 if __name__ == "__main__":
     import uvicorn

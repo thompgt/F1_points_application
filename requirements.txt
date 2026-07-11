@@ -21,3 +21,7 @@ alembic>=1.11.1
 # New dependencies for backend improvements
 starlette>=0.27.0  # For middleware (included with fastapi, but explicit)
 pydantic-settings>=2.0.0  # For settings management
+
+# Test dependencies
+pytest>=7.4.0
+httpx>=0.24.0  # required by fastapi.testclient.TestClient
