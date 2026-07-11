@@ -801,6 +801,11 @@ async def get_drivers(
 @app.get('/api/head-to-head')
 async def api_head_to_head(driver1_id: int, driver2_id: int, season: Optional[int] = None, mode: Optional[str] = 'season'):
     """Return season head-to-head statistics for two drivers."""
+    # This endpoint takes raw query params rather than the HeadToHeadRequest
+    # model, so its "can't compare a driver with themselves" validation
+    # never ran -- enforce it explicitly here instead.
+    if driver1_id == driver2_id:
+        raise HTTPException(status_code=422, detail="Cannot compare a driver with themselves")
     try:
         # Season-only mode (career comparisons disabled).
         mode = 'season'
