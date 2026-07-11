@@ -6,6 +6,7 @@ Includes error handling, rate limiting, logging, and request tracking.
 import time
 import logging
 import uuid
+import contextvars
 from datetime import datetime
 from typing import Callable, Optional
 from collections import defaultdict
@@ -59,24 +60,32 @@ logger = setup_logging()
 # ============================================================================
 
 class RequestContext:
-    """Thread-local storage for request context."""
-    _context: dict = {}
+    """
+    Per-request context storage using contextvars, which is correctly
+    isolated across concurrently-running async tasks (unlike a shared
+    class-level dict, which would let concurrent requests clobber each
+    other's request_id).
+    """
+    _request_id: contextvars.ContextVar = contextvars.ContextVar('request_id', default='unknown')
 
     @classmethod
     def set(cls, key: str, value):
-        cls._context[key] = value
+        if key == 'request_id':
+            cls._request_id.set(value)
 
     @classmethod
     def get(cls, key: str, default=None):
-        return cls._context.get(key, default)
+        if key == 'request_id':
+            return cls._request_id.get()
+        return default
 
     @classmethod
     def clear(cls):
-        cls._context.clear()
+        cls._request_id.set('unknown')
 
     @classmethod
     def get_request_id(cls) -> str:
-        return cls.get('request_id', 'unknown')
+        return cls._request_id.get()
 
 
 # ============================================================================
