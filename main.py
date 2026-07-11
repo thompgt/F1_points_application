@@ -517,7 +517,8 @@ async def get_seasons():
             logger.debug(f"Seasons loaded count={len(season_list)}")
         return {"seasons": season_list}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception(f"Error loading seasons: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 @app.post("/api/calculate-standings")
 async def calculate_standings_api(request: StandingsRequest):
@@ -597,9 +598,12 @@ async def calculate_standings_api(request: StandingsRequest):
             "points_system": points_system,
             "points_system_name": points_system_name
         }
-        
+
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception(f"Error calculating standings: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 @app.get("/api/points-systems")
 async def get_points_systems():
@@ -657,8 +661,8 @@ async def get_races(
         store_races(race_list)
         return {"races": race_list}
     except Exception as e:
-        logger.error(f"Error loading races: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception(f"Error loading races: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.post("/api/race-results")
@@ -758,8 +762,8 @@ async def get_race_results(request: RaceResultsRequest):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error loading race results: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception(f"Error loading race results: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.get("/api/drivers")
@@ -786,7 +790,8 @@ async def get_drivers(
         df = df.sort_values(by=['surname', 'forename'])
         return {"drivers": df[['driverId', 'forename', 'surname']].to_dict('records')}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception(f"Error loading drivers: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.get('/api/head-to-head')
@@ -1233,7 +1238,8 @@ async def api_head_to_head(driver1_id: int, driver2_id: int, season: Optional[in
 
         return response
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception(f"Error computing head-to-head stats: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.get('/api/h2h-wikipedia')
@@ -1256,7 +1262,8 @@ async def api_h2h_wikipedia(driver1: int, driver2: int, season: Optional[int] = 
         summary = f"{brief(driver1)}\n\n{brief(driver2)}\n\nNote: This is an offline summary. For richer summaries, enable external Wikipedia fetch." 
         return {'summary': summary}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception(f"Error building h2h summary: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.get('/api/race/{race_id}')
@@ -1298,7 +1305,8 @@ async def api_race_detail(race_id: int):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception(f"Error loading race detail: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.post("/api/simulate-season")
@@ -1414,7 +1422,8 @@ async def simulate_season_endpoint(request: SimulateSeasonRequest):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error simulating season: {str(e)}")
+        logger.exception(f"Error simulating season: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 if __name__ == "__main__":
     import uvicorn
