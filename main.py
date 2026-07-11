@@ -845,27 +845,18 @@ async def api_head_to_head(driver1_id: int, driver2_id: int, season: Optional[in
             poles = int(d[d.get('grid', pd.Series()) == 1].shape[0]) if 'grid' in d.columns else 0
             total_points = float(d['adjusted_points'].sum()) if 'adjusted_points' in d.columns else 0.0
 
-            # DNFs: count if completed laps < 90% of race laps, fallback to positionOrder missing
+            # DNFs: prefer positionText semantics (non-numeric means non-classified/retired).
             dnfs = 0
-            if 'laps' in d.columns and 'raceId' in d.columns:
-                for _, rr in d.iterrows():
-                    try:
-                        race_id = rr['raceId']
-                        race_row = races[races['raceId'] == race_id]
-                        if not race_row.empty and 'laps' in race_row.columns and not pd.isna(race_row.iloc[0]['laps']):
-                            total_laps = float(race_row.iloc[0]['laps'])
-                            driver_laps = float(rr.get('laps', 0) or 0)
-                            if total_laps > 0 and driver_laps < 0.9 * total_laps:
-                                dnfs += 1
-                                continue
-                    except Exception:
-                        pass
-                if dnfs == 0 and 'positionOrder' in d.columns:
-                    dnfs = int(d['positionOrder'].isna().sum())
+            if 'positionText' in d.columns:
+                try:
+                    pos_text = d['positionText'].astype(str).str.strip()
+                    # Numeric positionText values indicate classified finishers.
+                    dnf_mask = ~pos_text.str.match(r'^\d+$')
+                    dnfs = int(dnf_mask.sum())
+                except Exception:
+                    dnfs = 0
             elif 'positionOrder' in d.columns:
                 dnfs = int(d['positionOrder'].isna().sum())
-            elif 'positionText' in d.columns:
-                dnfs = int(d['positionText'].isin(['R', 'D', 'DNF']).sum())
 
             # Grid stats (rounded to nearest tenth)
             avg_grid = None
@@ -1049,21 +1040,29 @@ async def api_head_to_head(driver1_id: int, driver2_id: int, season: Optional[in
         def clamp01(v):
             return max(0.0, min(100.0, float(v)))
 
-        def score_avg_position(v):
-            if v is None:
+        def normalize_to_100(value, min_val, max_val, invert=False):
+            if value is None:
                 return 50.0
-            return clamp01(((21.0 - float(v)) / 20.0) * 100.0)
+            val = float(value)
+            if max_val <= min_val:
+                return 50.0
+            ratio = (val - float(min_val)) / (float(max_val) - float(min_val))
+            ratio = max(0.0, min(1.0, ratio))
+            score = (1.0 - ratio) * 100.0 if invert else ratio * 100.0
+            return clamp01(score)
+
+        def score_avg_position(v):
+            # Lower average position is better (1 is best, 21 is worst/DNF bucket).
+            return normalize_to_100(v, 1.0, 21.0, invert=True)
 
         def score_net_positions(v):
-            if v is None:
-                return 50.0
-            return clamp01(((float(v) + 10.0) / 20.0) * 100.0)
+            # Typical range from -10 (bad) to +10 (great).
+            return normalize_to_100(v, -10.0, 10.0, invert=False)
 
         def score_consistency(variance):
-            if variance is None:
-                return 50.0
-            # Lower variance is better; 0 variance => 100.
-            return clamp01(100.0 - (min(float(variance), 25.0) / 25.0) * 100.0)
+            # Same formula-based scaling as other metrics: min-max normalization to 0..100.
+            # Lower variance is better; near-zero variance should map close to 100.
+            return normalize_to_100(variance, 0.0, 25.0, invert=True)
 
         def build_radar_scores(stats):
             return {

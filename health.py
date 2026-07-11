@@ -7,8 +7,9 @@ from datetime import datetime
 from typing import Optional
 import os
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Response
 from pydantic import BaseModel
+from sqlalchemy import text
 
 from db import SessionLocal, engine
 
@@ -80,7 +81,7 @@ def check_database() -> dict:
     try:
         db = SessionLocal()
         # Execute a simple query to verify connection
-        db.execute("SELECT 1")
+        db.execute(text("SELECT 1"))
         db.close()
         return {
             "status": "connected",
@@ -106,7 +107,9 @@ def check_redis() -> dict:
     
     redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379/0')
     try:
-        client = redis.Redis.from_url(redis_url, decode_responses=True, socket_timeout=2)
+        client = redis.Redis.from_url(
+            redis_url, decode_responses=True, socket_timeout=2, socket_connect_timeout=2
+        )
         client.ping()
         info = client.info()
         return {
@@ -186,7 +189,7 @@ async def health_check():
 
 
 @router.get("/ready", response_model=ReadinessStatus)
-async def readiness_check():
+async def readiness_check(response: Response):
     """
     Readiness probe endpoint.
     Checks if the application is ready to accept traffic.
@@ -195,11 +198,15 @@ async def readiness_check():
     db_status = check_database()
     redis_status = check_redis()
     data_status = check_data_files()
-    
+
     # Application is ready if database and data files are healthy
     # Redis is optional (degraded mode acceptable)
     is_ready = db_status["healthy"] and data_status["healthy"]
-    
+
+    # Readiness probes are polled on status code, not just body -- a 200
+    # here regardless of readiness defeats the point of the probe.
+    response.status_code = 200 if is_ready else 503
+
     return ReadinessStatus(
         status="ready" if is_ready else "not_ready",
         checks={

@@ -8,14 +8,17 @@
     <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
     <style>
         body { background: #0f0f0f; color: #fff; font-family: Arial, sans-serif; }
-        .container { padding: 2rem; padding-left: 1rem; padding-right: 1.5rem; }
+        .container { padding: 1.5rem; padding-left: 1rem; padding-right: 1rem; max-width: 1440px; }
         .card { background: #1f1f1f; border: 1px solid rgba(255,255,255,0.06); }
         .summary { white-space: pre-wrap; line-height: 1.45; color: #ffffff; max-height: 220px; overflow-y: auto; }
         /* Ensure stats table text is white and doesn't wrap the metric column */
         #statsTable .table th, #statsTable .table td {
             color: #ffffff !important;
-            white-space: nowrap;
+            white-space: normal;
+            vertical-align: middle;
         }
+        #statsTable .table th { width: 44%; }
+        #statsTable .table td { width: 28%; }
         /* Force card headings and wiki summary text to white for readability */
         .card h5, #statsCard h5, .card .summary, #wikiSummary {
             color: #ffffff !important;
@@ -23,8 +26,8 @@
 
         /* Slight left shift for the left column cards to improve visual alignment */
         @media (min-width: 992px) {
-            .col-lg-4.mb-3 { padding-left: 0.25rem; }
-            .col-lg-8 { padding-right: 0.25rem; }
+            .col-lg-4.mb-3 { padding-left: 0.4rem; }
+            .col-lg-8 { padding-right: 0.4rem; }
         }
         /* Ensure race table headers and cells are white */
         #raceTable th, #raceTable td {
@@ -54,7 +57,7 @@
         </div>
 
         <div class="row">
-            <div class="col-lg-4 mb-3">
+            <div class="col-lg-5 mb-3">
                 <div class="card p-3" id="statsCard">
                     <h5>Statistics</h5>
                     <div id="statsTable"></div>
@@ -64,7 +67,7 @@
                     <div id="wikiSummary" class="summary">Loading...</div>
                 </div>
             </div>
-            <div class="col-lg-8">
+            <div class="col-lg-7">
                 <div class="card p-3">
                     <h5>Race-by-Race</h5>
                     <div class="btn-group btn-group-sm mb-3" role="group" aria-label="comparison mode">
@@ -236,11 +239,27 @@
                 const d2 = data.driver2_stats || {};
                 const s1 = d1.radar_scores || {};
                 const s2 = d2.radar_scores || {};
-                const categories = Object.keys(s1);
+                const categories = [
+                    'Avg Grid<br>(Race Pace)',
+                    'Avg Quali<br>(Raw Pace)',
+                    'Net Positions Gained<br>(Race Craft)',
+                    'Consistency<br>(Low Variance)',
+                    'Teammate Dominance<br>(% Points)',
+                    'Clutchness'
+                ];
                 if (!categories.length) return;
 
-                const r1 = categories.map(c => Number(s1[c] ?? 50));
-                const r2 = categories.map(c => Number(s2[c] ?? 50));
+                const keyMap = {
+                    'Avg Grid<br>(Race Pace)': 'Avg Finish (Race Pace)',
+                    'Avg Quali<br>(Raw Pace)': 'Avg Quali (Raw Pace)',
+                    'Net Positions Gained<br>(Race Craft)': 'Net Positions Gained (Race Craft)',
+                    'Consistency<br>(Low Variance)': 'Consistency (Low Variance)',
+                    'Teammate Dominance<br>(% Points)': 'Teammate Dominance (%)',
+                    'Clutchness': 'Clutchness'
+                };
+
+                const r1 = categories.map(c => Number(s1[keyMap[c]] ?? 50));
+                const r2 = categories.map(c => Number(s2[keyMap[c]] ?? 50));
 
                 const trace1 = {
                     type: 'scatterpolar',
@@ -267,11 +286,12 @@
                         radialaxis: {
                             visible: true,
                             range: [0, 100],
-                            tickfont: { color: '#fff' },
+                            showticklabels: false,
+                            ticks: '',
                             gridcolor: 'rgba(255,255,255,0.2)'
                         },
                         angularaxis: {
-                            tickfont: { color: '#fff', size: 11 },
+                            tickfont: { color: '#fff', size: 10 },
                             gridcolor: 'rgba(255,255,255,0.2)'
                         }
                     },
