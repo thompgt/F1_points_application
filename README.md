@@ -85,10 +85,37 @@ A full-stack web application that allows users to calculate Formula 1 driver sta
 ## API Endpoints
 
 - `GET /` - Main application page
+- `GET /head-to-head` - Head-to-head driver comparison page
+- `GET /race-detail` - Race detail page
 - `GET /api/seasons` - Get all available seasons
 - `POST /api/calculate-standings` - Calculate standings for a season with specified points system
 - `GET /api/points-systems` - Get predefined points systems
+- `GET /api/races` - Get all races for a season
+- `POST /api/race-results` - Get detailed results for a specific race
+- `GET /api/drivers` - Get drivers, optionally filtered by season
+- `GET /api/head-to-head` - Season head-to-head stats for two drivers
+- `GET /api/h2h-wikipedia` - Offline driver summary for a head-to-head comparison
+- `GET /api/race/{race_id}` - Race detail and results by race ID
 - `POST /api/simulate-season` - Generate AI-powered season simulation PDF (uses Ollama)
+- `GET /health`, `/ready`, `/live`, `/health/detailed`, `/metrics` - Health/readiness probes and metrics
+
+## Environment Variables
+
+All variables have sensible defaults for local development; set these in a `.env` file or your deployment environment for production.
+
+| Variable | Default | Description |
+|---|---|---|
+| `ENVIRONMENT` | `development` | `development`, `staging`, or `production` |
+| `API_VERSION` | `1.0.0` | Reported in the API docs/OpenAPI schema |
+| `DATABASE_URL` | `sqlite:///cache.db` | SQLite or Postgres (Supabase) connection string |
+| `CACHE_DB_URL` | - | Fallback for `DATABASE_URL` |
+| `REDIS_URL` | `redis://localhost:6379/0` | Optional Redis cache for head-to-head responses |
+| `ENABLE_RATE_LIMITING` | `true` | Toggle the in-memory rate limiter |
+| `RATE_LIMIT_PER_MINUTE` | `60` | Requests per minute per client |
+| `RATE_LIMIT_PER_HOUR` | `1000` | Requests per hour per client |
+| `RATE_LIMIT_BURST` | `10` | Max requests per second per client |
+| `CORS_ORIGINS` | `*` | Comma-separated allowed origins. Credentials are only enabled on non-wildcard origins |
+| `OLLAMA_BASE_URL` | `http://localhost:11434` | Local Ollama server used by `/api/simulate-season` |
 
 ## Example API Usage
 
