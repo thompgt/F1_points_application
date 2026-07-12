@@ -150,11 +150,14 @@ class SeasonSimulator:
             return None
     
     def generate_season_summary(self,
-                               season_year: int, 
+                               season_year: int,
                                standings_data: Dict,
                                points_system: str,
                                wikipedia_context: str) -> str:
-        """Generate AI summary using Ollama."""
+        """Generate AI summary. Uses Groq (cloud, no local model server needed) when
+        GROQ_API_KEY is set - this is what makes the feature work on free hosting,
+        which has no Ollama instance available. Falls back to local Ollama otherwise,
+        so local dev keeps working with no new setup."""
         try:
             # Prepare standings text
             top_drivers = standings_data['standings'][:10]
@@ -162,7 +165,7 @@ class SeasonSimulator:
                 f"{i+1}. {d['forename']} {d['surname']} ({d.get('constructor_name', 'Unknown')}) - {d['adjusted_points']} points"
                 for i, d in enumerate(top_drivers)
             ])
-            
+
             prompt = f"""You are an expert F1 analyst. Generate a comprehensive season summary for the {season_year} Formula One season.
 
 Points System Used: {points_system}
@@ -182,26 +185,51 @@ Please provide:
 
 Write in an engaging, informative style suitable for a professional report."""
 
-            response = requests.post(
-                f"{self.ollama_base_url}/api/generate",
-                json={
-                    "model": self.ollama_model,
-                    "prompt": prompt,
-                    "stream": False
-                },
-                timeout=180
-            )
-            if response.status_code != 200:
-                raise RuntimeError(f"Ollama returned status {response.status_code}: {response.text[:300]}")
+            groq_api_key = os.getenv('GROQ_API_KEY')
+            if groq_api_key:
+                text = self._generate_via_groq(prompt, groq_api_key)
+            else:
+                text = self._generate_via_ollama(prompt)
 
-            data = response.json()
-            text = data.get('response', '').strip()
             if not text:
-                raise RuntimeError("Ollama returned empty response")
+                raise RuntimeError("AI provider returned empty response")
             return text
         except Exception as e:
             print(f"Error generating summary: {e}")
             return f"Error generating AI summary. Basic info: {season_year} F1 season with {len(standings_data['standings'])} drivers."
+
+    def _generate_via_groq(self, prompt: str, api_key: str) -> str:
+        """Groq's OpenAI-compatible chat/completions endpoint - free tier, no card required."""
+        model = os.getenv('GROQ_MODEL', 'llama-3.3-70b-versatile')
+        response = requests.post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            headers={"Authorization": f"Bearer {api_key}"},
+            json={
+                "model": model,
+                "messages": [{"role": "user", "content": prompt}],
+                "stream": False
+            },
+            timeout=180
+        )
+        if response.status_code != 200:
+            raise RuntimeError(f"Groq returned status {response.status_code}: {response.text[:300]}")
+        data = response.json()
+        return data["choices"][0]["message"]["content"].strip()
+
+    def _generate_via_ollama(self, prompt: str) -> str:
+        response = requests.post(
+            f"{self.ollama_base_url}/api/generate",
+            json={
+                "model": self.ollama_model,
+                "prompt": prompt,
+                "stream": False
+            },
+            timeout=180
+        )
+        if response.status_code != 200:
+            raise RuntimeError(f"Ollama returned status {response.status_code}: {response.text[:300]}")
+        data = response.json()
+        return data.get('response', '').strip()
     
     def create_pdf_report(self,
                          season_year: int,
