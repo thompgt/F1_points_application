@@ -119,15 +119,20 @@ FIXED_OLLAMA_MODEL = "llama3.1:8b"
 
 # Note: Request models (StandingsRequest, SimulateSeasonRequest, etc.) are now in validators.py
 
+# This dataset's missing-value convention is the literal string "\N", not a
+# blank cell - pandas' default na_values doesn't include it, so without this
+# every "\N" (e.g. DNF drivers' time/milliseconds) reads as a non-null string.
+CSV_NA_VALUES = ['\\N']
+
 @lru_cache(maxsize=1)
 def load_data():
     """Load all necessary CSV files"""
-    results = pd.read_csv('results.csv')
-    races = pd.read_csv('races.csv')
-    drivers = pd.read_csv('drivers.csv')
-    seasons = pd.read_csv('seasons.csv')
-    constructors = pd.read_csv('constructors.csv')
-    driver_standings = pd.read_csv('driver_standings.csv')
+    results = pd.read_csv('results.csv', na_values=CSV_NA_VALUES, keep_default_na=True)
+    races = pd.read_csv('races.csv', na_values=CSV_NA_VALUES, keep_default_na=True)
+    drivers = pd.read_csv('drivers.csv', na_values=CSV_NA_VALUES, keep_default_na=True)
+    seasons = pd.read_csv('seasons.csv', na_values=CSV_NA_VALUES, keep_default_na=True)
+    constructors = pd.read_csv('constructors.csv', na_values=CSV_NA_VALUES, keep_default_na=True)
+    driver_standings = pd.read_csv('driver_standings.csv', na_values=CSV_NA_VALUES, keep_default_na=True)
     return results, races, drivers, seasons, constructors, driver_standings
 
 def adjust_points(results_df, points_system):
