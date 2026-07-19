@@ -1,6 +1,50 @@
 # F1 Points Calculator
 
-A full-stack web application that allows users to calculate Formula 1 driver standings using different points systems. Built with FastAPI, Plotly, and modern web technologies.
+**What if F1 had always scored points the way it does today?**
+
+Formula 1's points system has changed many times — a win was worth 8 points in
+the 1950s, 9 in the 1980s, and is worth 25 today. Drivers' championships were
+won and lost under rules that no longer apply. This app recalculates any
+historical F1 season (1950–2024) under a points system of your choosing —
+Modern, Classic, Pre-1991, or a fully custom scale — and shows you how the
+standings would have looked.
+
+It's a full-stack web app: FastAPI backend over historical F1 results data,
+an interactive frontend with Plotly charts, and an optional AI-generated
+season report (via a local Ollama model) that writes up the recalculated
+season with historical context pulled from Wikipedia.
+
+### Example: it isn't just a rescale
+
+Recalculating the 1988 season with the Modern points system doesn't just
+scale everyone up evenly — the whole shape of the season changes because
+who scored *how often* matters differently across systems:
+
+![Actual vs. modern-recalculated points, 1988 season](images/actual_vs_adjusted_1988.png)
+
+And for any season, the app can trace how a title fight evolved race by
+race — here's the 2021 Hamilton vs. Verstappen battle, recalculated under
+the Modern points system:
+
+![Cumulative points race-by-race, 2021 season](images/cumulative_points_2021.png)
+
+*(Both charts above were generated straight from this repo's own data —
+see [`adjusted_points.py`](adjusted_points.py) / [`adjusted_points.ipynb`](adjusted_points.ipynb) for the
+recalculation logic that also powers the live app in `main.py`.)*
+
+### How data flows through the app
+
+```mermaid
+flowchart LR
+    A[F1 CSV data<br/>results, races, drivers, seasons] --> B[(SQLite / Postgres<br/>database.db via db.py)]
+    A --> C[Points adjustment engine<br/>adjust_points + calculate_standings]
+    B -.cache.-> C
+    C --> D[FastAPI backend<br/>main.py]
+    D --> E[Web UI<br/>templates/index.html<br/>Plotly charts]
+    D --> F[AI Season Simulation<br/>season_simulator.py]
+    F --> G[Ollama LLM + Wikipedia RAG]
+    G --> H[PDF report]
+```
 
 ## Features
 
