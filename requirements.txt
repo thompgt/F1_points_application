@@ -21,8 +21,12 @@ cryptography>=42.0.0  # required by PyMySQL for MySQL 8 caching_sha2_password au
 alembic>=1.11.1
 
 # New dependencies for backend improvements
-starlette>=0.27.0  # For middleware (included with fastapi, but explicit)
+starlette>=0.27.0,<0.51.0  # For middleware (included with fastapi, but explicit)
 pydantic-settings>=2.0.0  # For settings management
+
+# Observability: Prometheus metrics exposed at /metrics (see monitoring/)
+prometheus-client>=0.21.0  # Metric primitives (Counter/Gauge/Histogram)
+prometheus-fastapi-instrumentator>=7.0.0  # Per-route HTTP metrics + /metrics endpoint
 
 # Test dependencies
 pytest>=7.4.0
