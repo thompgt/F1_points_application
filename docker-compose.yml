@@ -1,0 +1,27 @@
+services:
+  mysql:
+    image: mysql:8.4
+    container_name: f1-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-f1rootpass}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-f1}
+      MYSQL_USER: ${MYSQL_USER:-f1user}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-f1pass}
+    ports:
+      - "${MYSQL_PORT:-3306}:3306"
+    volumes:
+      # Named volume -> the database survives `docker compose down` and container rebuilds.
+      - f1_mysql_data:/var/lib/mysql
+    command:
+      - --local-infile=1
+      - --max-allowed-packet=256M
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-p${MYSQL_ROOT_PASSWORD:-f1rootpass}"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+volumes:
+  f1_mysql_data:
