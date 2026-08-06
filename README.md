@@ -7,7 +7,7 @@
 ![Python](https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=for-the-badge&logo=fastapi&logoColor=white)
 ![Plotly](https://img.shields.io/badge/Plotly-3F4F75?style=for-the-badge&logo=plotly&logoColor=white)
-![PostgreSQL](https://img.shields.io/badge/PostgreSQL-4169E1?style=for-the-badge&logo=postgresql&logoColor=white)
+![MySQL](https://img.shields.io/badge/MySQL-4479A1?style=for-the-badge&logo=mysql&logoColor=white)
 ![Ollama](https://img.shields.io/badge/Ollama-000000?style=for-the-badge&logo=ollama&logoColor=white)
 ![Docker](https://img.shields.io/badge/Docker-2496ED?style=for-the-badge&logo=docker&logoColor=white)
 
@@ -45,9 +45,9 @@ recalculation logic that also powers the live app in `main.py`.)*
 
 ```mermaid
 flowchart LR
-    A[F1 CSV data<br/>results, races, drivers, seasons] --> B[(SQLite / Postgres<br/>database.db via db.py)]
-    A --> C[Points adjustment engine<br/>adjust_points + calculate_standings]
-    B -.cache.-> C
+    A[F1 CSV seed data<br/>results, races, drivers, seasons] -- scripts/seed_mysql.py --> B[(MySQL 8<br/>Docker + persistent volume)]
+    B --> C[Points adjustment engine<br/>adjust_points + calculate_standings]
+    A -.CSV fallback if DB unavailable.-> C
     C --> D[FastAPI backend<br/>main.py]
     D --> E[Web UI<br/>templates/index.html<br/>Plotly charts]
     D --> F[AI Season Simulation<br/>season_simulator.py]
@@ -83,7 +83,18 @@ flowchart LR
    pip install -r requirements.txt
    ```
 
-3. **Set up Ollama (for AI Season Simulation)**:
+3. **Start the MySQL database and seed it** (this is where the app reads its data from):
+   ```bash
+   docker compose up -d                 # pulls mysql:8.4, persistent volume f1_mysql_data
+   cp .env.example .env                 # DATABASE_URL already points at the container
+   python scripts/seed_mysql.py         # loads the CSVs into MySQL (one-off, ~30s)
+   ```
+   The seeder is idempotent — it skips tables that already hold rows. Use
+   `python scripts/seed_mysql.py --force` to reload them. Data lives in the
+   `f1_mysql_data` Docker volume, so it survives `docker compose down` and
+   container rebuilds; `docker compose down -v` deletes it.
+
+4. **Set up Ollama (for AI Season Simulation)**:
     - Model used by this app is fixed to: `llama3.1:8b`
     - Local install option:
        - Install Ollama from https://ollama.com/download
@@ -96,11 +107,14 @@ flowchart LR
     - Optional env config:
        - `OLLAMA_BASE_URL=http://localhost:11434`
 
-4. **Ensure you have the required CSV files**:
+5. **Ensure you have the seed CSV files** (used by the seeder, and as a fallback
+   if the database is unreachable):
    - `results.csv` - Race results data
    - `races.csv` - Race information
    - `drivers.csv` - Driver information
    - `seasons.csv` - Available seasons
+   - `constructors.csv` - Constructor information
+   - `driver_standings.csv` - Official standings per race
 
 ## Usage
 
@@ -160,8 +174,12 @@ All variables have sensible defaults for local development; set these in a `.env
 |---|---|---|
 | `ENVIRONMENT` | `development` | `development`, `staging`, or `production` |
 | `API_VERSION` | `1.0.0` | Reported in the API docs/OpenAPI schema |
-| `DATABASE_URL` | `sqlite:///cache.db` | SQLite or Postgres (Supabase) connection string |
+| `DATABASE_URL` | `sqlite:///cache.db` | Connection string. Use `mysql+pymysql://f1user:f1pass@localhost:3306/f1` for the Docker MySQL; SQLite and Postgres (Supabase) URLs also work |
 | `CACHE_DB_URL` | - | Fallback for `DATABASE_URL` |
+| `MYSQL_DATABASE` / `MYSQL_USER` / `MYSQL_PASSWORD` | `f1` / `f1user` / `f1pass` | Credentials `docker-compose.yml` creates the database with — keep in sync with `DATABASE_URL` |
+| `MYSQL_ROOT_PASSWORD` | `f1rootpass` | MySQL root password inside the container |
+| `MYSQL_PORT` | `3306` | Host port the MySQL container is published on |
+| `DATA_DIR` | `.` | Directory the seed CSVs are read from |
 | `REDIS_URL` | `redis://localhost:6379/0` | Optional Redis cache for head-to-head responses |
 | `ENABLE_RATE_LIMITING` | `true` | Toggle the in-memory rate limiter |
 | `RATE_LIMIT_PER_MINUTE` | `60` | Requests per minute per client |
@@ -193,11 +211,19 @@ response = requests.post("http://localhost:8000/api/calculate-standings",
 
 ## Data Sources
 
-The application uses historical F1 data from CSV files containing:
+The application reads all historical F1 data from **MySQL** — it is the single
+point of retrieval for anything requiring data. The CSV files in the repo are
+the seed: `scripts/seed_mysql.py` loads them into the `results`, `races`,
+`drivers`, `seasons`, `constructors` and `driver_standings` tables (with indexes
+on `raceId`, `driverId` and `year`), and `load_data()` in `main.py` queries those
+tables. If the database is unreachable or has not been seeded, the app logs a
+warning and falls back to reading the CSVs directly so it still boots.
+
+The datasets cover:
 - Race results and positions
 - Driver information
 - Race details and seasons
-- Circuit information
+- Constructor information
 
 ## Technical Stack
 
@@ -205,7 +231,7 @@ The application uses historical F1 data from CSV files containing:
 - **Frontend**: HTML5, CSS3, JavaScript
 - **Styling**: Bootstrap 5, Custom CSS
 - **Visualizations**: Plotly.js
-- **Data Processing**: Pandas
+- **Database**: MySQL 8 (Docker, persistent volume), SQLAlchemy
 - **AI/ML**: Ollama, ChromaDB (Vector Database), RAG
 - **Web Scraping**: Beautiful Soup, Requests, Wikipedia API
 - **PDF Generation**: ReportLab, Kaleido
@@ -246,7 +272,20 @@ The charts are created using Plotly. You can modify the chart functions in `main
 
 2. **Missing CSV files**: Ensure all required CSV files are in the project directory
 
-3. **Dependencies issues**: Try updating pip and reinstalling requirements:
+3. **App logs "Database load failed … falling back to seed CSV files"**: MySQL is
+   down or unseeded. Check `docker compose ps` (the service should be `healthy`),
+   confirm `DATABASE_URL` in `.env` matches the compose credentials, and run
+   `python scripts/seed_mysql.py`.
+
+4. **`Can't connect to MySQL server on 'localhost'`**: something else is already
+   using port 3306 — set `MYSQL_PORT=3307` in `.env`, update the port in
+   `DATABASE_URL` to match, and `docker compose up -d` again.
+
+5. **`cryptography package is required for sha256_password`**: install the MySQL
+   extras with `pip install -r requirements.txt` (PyMySQL needs `cryptography`
+   for MySQL 8's default auth plugin).
+
+6. **Dependencies issues**: Try updating pip and reinstalling requirements:
    ```bash
    python -m pip install --upgrade pip
    pip install -r requirements.txt
