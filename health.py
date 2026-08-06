@@ -85,7 +85,8 @@ def check_database() -> dict:
         db.close()
         return {
             "status": "connected",
-            "type": "postgresql" if "postgresql" in str(engine.url) else "sqlite",
+            # mysql / postgresql / sqlite -- report what's actually configured
+            "type": engine.dialect.name,
             "healthy": True
         }
     except Exception as e:
