@@ -16,6 +16,8 @@ kaleido>=0.2.0
 SQLAlchemy>=2.0.0
 redis>=4.5.0
 psycopg[binary]>=3.1
+PyMySQL>=1.1.0  # MySQL driver (mysql+pymysql:// URLs)
+cryptography>=42.0.0  # required by PyMySQL for MySQL 8 caching_sha2_password auth
 alembic>=1.11.1
 
 # New dependencies for backend improvements

@@ -3,7 +3,8 @@ from sqlalchemy.orm import declarative_base, sessionmaker
 from sqlalchemy.sql import func
 import os
 
-# Use DATABASE_URL (for Supabase/Postgres) if provided, otherwise fallback to local sqlite cache
+# Use DATABASE_URL (MySQL via docker-compose, or Supabase/Postgres) if provided,
+# otherwise fall back to a local sqlite cache so the app still boots un-configured.
 DATABASE_URL = os.getenv('DATABASE_URL') or os.getenv('CACHE_DB_URL') or 'sqlite:///cache.db'
 
 # If using Postgres on platforms like Supabase, ensure SSL requirement is preserved
@@ -11,11 +12,22 @@ if DATABASE_URL.startswith('postgres://'):
     # requirements.txt installs psycopg3 (psycopg[binary]), not psycopg2
     DATABASE_URL = DATABASE_URL.replace('postgres://', 'postgresql+psycopg://', 1)
 
+# requirements.txt installs PyMySQL; SQLAlchemy's bare `mysql://` default driver is
+# MySQLdb (not installed), so pin the dialect explicitly.
+if DATABASE_URL.startswith('mysql://'):
+    DATABASE_URL = DATABASE_URL.replace('mysql://', 'mysql+pymysql://', 1)
+
 connect_args = {}
+engine_kwargs = {}
 if DATABASE_URL.startswith('sqlite'):
     connect_args = {"check_same_thread": False}
+else:
+    # MySQL closes idle connections after wait_timeout (8h default, much lower in
+    # some configs) -- without these a pooled connection resurfaces as an
+    # "MySQL server has gone away" error on the next request.
+    engine_kwargs = {"pool_pre_ping": True, "pool_recycle": 1800}
 
-engine = create_engine(DATABASE_URL, connect_args=connect_args)
+engine = create_engine(DATABASE_URL, connect_args=connect_args, **engine_kwargs)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 Base = declarative_base()
 
