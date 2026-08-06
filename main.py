@@ -44,6 +44,8 @@ from validators import (
 )
 from middleware import add_middleware_stack, get_logger
 from health import router as health_router
+from prometheus_fastapi_instrumentator import Instrumentator
+import metrics
 
 # Optional Redis
 try:
@@ -110,6 +112,18 @@ add_middleware_stack(app, {
 
 # Include health check routes
 app.include_router(health_router)
+
+# Prometheus metrics. instrument() adds per-request counters/histograms labelled by
+# *route template* (/api/race/{race_id}, not /api/race/1052) -- concrete ids would
+# mint a new time series per race. expose() serves the text exposition at /metrics,
+# which is why health.py no longer defines a route of that name.
+#
+# Grouping status codes would collapse 404 and 422 into "4xx", but the error-rate
+# panel wants to tell "season not in the dataset" apart from "bad request body".
+Instrumentator(
+    should_group_status_codes=False,
+    excluded_handlers=["/metrics"],  # don't let the scrape inflate its own numbers
+).instrument(app).expose(app, include_in_schema=False)
 
 # Mount static files and templates
 #app.mount("/static", StaticFiles(directory="static"), name="static")

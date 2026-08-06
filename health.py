@@ -12,6 +12,7 @@ from pydantic import BaseModel
 from sqlalchemy import text
 
 from db import SessionLocal, engine
+from metrics import register_health_collector
 
 # Try to import Redis client
 try:
@@ -264,36 +265,22 @@ async def detailed_health_check():
 
 
 # ============================================================================
-# Metrics Endpoint (Optional - for Prometheus)
+# Metrics
 # ============================================================================
+#
+# This module used to hand-roll a GET /metrics that formatted four gauges into a
+# string. That route is gone: prometheus-fastapi-instrumentator now owns /metrics
+# (see main.py), and it would collide with anything registered here.
+#
+# The four series it published -- f1_api_up, f1_api_uptime_seconds,
+# f1_api_database_healthy, f1_api_cache_healthy -- are preserved under the same
+# names as real prometheus_client gauges, evaluated at scrape time by the check
+# functions above rather than by a duplicate implementation. Registering here
+# rather than in main.py keeps the checks and their exports in one file.
 
-@router.get("/metrics", include_in_schema=False)
-async def metrics():
-    """
-    Basic metrics endpoint for monitoring.
-    For production, consider using prometheus-fastapi-instrumentator.
-    """
-    uptime = calculate_uptime()
-    db_healthy = 1 if check_database()["healthy"] else 0
-    redis_healthy = 1 if check_redis()["healthy"] else 0
-    
-    # Prometheus-compatible format
-    metrics_text = f"""# HELP f1_api_up Whether the API is up
-# TYPE f1_api_up gauge
-f1_api_up 1
-
-# HELP f1_api_uptime_seconds Application uptime in seconds
-# TYPE f1_api_uptime_seconds counter
-f1_api_uptime_seconds {uptime:.2f}
-
-# HELP f1_api_database_healthy Whether database is healthy
-# TYPE f1_api_database_healthy gauge
-f1_api_database_healthy {db_healthy}
-
-# HELP f1_api_cache_healthy Whether cache is healthy
-# TYPE f1_api_cache_healthy gauge
-f1_api_cache_healthy {redis_healthy}
-"""
-    
-    from fastapi.responses import PlainTextResponse
-    return PlainTextResponse(content=metrics_text, media_type="text/plain")
+register_health_collector(
+    check_database=check_database,
+    check_redis=check_redis,
+    check_data_files=check_data_files,
+    calculate_uptime=calculate_uptime,
+)
