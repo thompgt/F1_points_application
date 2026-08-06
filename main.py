@@ -30,7 +30,7 @@ from typing import List, Optional
 import warnings
 from functools import lru_cache
 from season_simulator import simulate_season
-from db import init_db, HeadToHeadCache, SessionLocal
+from db import init_db, HeadToHeadCache, SessionLocal, engine
 import sqlalchemy
 
 # Import new modules for validation, middleware, and health checks
@@ -119,15 +119,45 @@ FIXED_OLLAMA_MODEL = "llama3.1:8b"
 
 # Note: Request models (StandingsRequest, SimulateSeasonRequest, etc.) are now in validators.py
 
+# The six datasets every endpoint is built on. Table name == CSV basename.
+DATA_TABLES = ('results', 'races', 'drivers', 'seasons', 'constructors', 'driver_standings')
+
+
+def _load_from_database():
+    """Read the F1 datasets out of the configured database (MySQL by default).
+
+    Raises if any table is missing or empty so the caller can fall back to CSVs.
+    """
+    frames = []
+    with engine.connect() as conn:
+        for table in DATA_TABLES:
+            df = pd.read_sql_table(table, conn)
+            if df.empty:
+                raise ValueError(f"table '{table}' is empty -- run scripts/seed_mysql.py")
+            frames.append(df)
+    return frames
+
+
+def _load_from_csv():
+    """Read the F1 datasets from the seed CSVs in the repo."""
+    # Kaggle's exports use a literal \N for missing values.
+    return [pd.read_csv(f'{table}.csv', na_values=['\\N']) for table in DATA_TABLES]
+
+
 @lru_cache(maxsize=1)
 def load_data():
-    """Load all necessary CSV files"""
-    results = pd.read_csv('results.csv')
-    races = pd.read_csv('races.csv')
-    drivers = pd.read_csv('drivers.csv')
-    seasons = pd.read_csv('seasons.csv')
-    constructors = pd.read_csv('constructors.csv')
-    driver_standings = pd.read_csv('driver_standings.csv')
+    """Load all necessary F1 datasets.
+
+    The database is the point of retrieval; the CSVs are only the seed data and
+    stay in place as a fallback so the app still boots if MySQL is down or has
+    not been seeded yet (see scripts/seed_mysql.py).
+    """
+    try:
+        results, races, drivers, seasons, constructors, driver_standings = _load_from_database()
+        logger.info(f"Loaded F1 datasets from {engine.dialect.name} database")
+    except Exception as exc:
+        logger.warning(f"Database load failed ({exc}); falling back to seed CSV files")
+        results, races, drivers, seasons, constructors, driver_standings = _load_from_csv()
     return results, races, drivers, seasons, constructors, driver_standings
 
 def adjust_points(results_df, points_system):
