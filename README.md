@@ -156,7 +156,8 @@ F1_points_application/
 ├── docker-compose.yml           # MySQL 8.4
 ├── docker-compose.ollama.yml    # Ollama LLM server
 ├── .env.example                 # All configuration, documented
-├── requirements.txt
+├── requirements.in              # Direct deps with intended ranges
+├── requirements.txt             # Fully pinned lock (pip-compile output)
 └── *.csv                        # Seed datasets (results, races, drivers, ...)
 ```
 
@@ -309,6 +310,19 @@ are recorded for the Prometheus scrape at `/metrics`.
 ```bash
 pip install -r requirements.txt
 ```
+
+`requirements.txt` is a fully pinned lock — every version exact, transitive
+dependencies included. `requirements.in` holds the direct dependencies with the
+ranges that are actually intended; edit that and regenerate:
+
+```bash
+pip install pip-tools
+pip-compile requirements.in -o requirements.txt
+```
+
+Nothing floats, and CI demonstrated why on its first run: a newer FastAPI renamed
+router internals, `prometheus-fastapi-instrumentator` broke against it, and every
+health-probe test failed on a commit that changed no application code.
 
 ### 2. Start and seed the database
 
