@@ -130,7 +130,8 @@ flowchart LR
 
 ```
 F1_points_application/
-├── main.py                      # FastAPI app: routes, points engine, Plotly charts
+├── main.py                      # FastAPI app: routes and Plotly charts
+├── scoring.py                   # Points rules, named systems, countback standings
 ├── db.py                        # SQLAlchemy engine/session + cache & race ORM models
 ├── health.py                    # /health, /ready, /live, /health/detailed probes
 ├── metrics.py                   # Prometheus metric definitions + health collector
@@ -143,7 +144,7 @@ F1_points_application/
 │   ├── seed_mysql.py            # CSV -> MySQL seeder (idempotent)
 │   └── migrate_sqlite_to_postgres.py
 ├── templates/                   # index.html, head_to_head.html, race_detail.html
-├── tests/                       # pytest suite (test_api.py, h2h_test.py, conftest.py)
+├── tests/                       # pytest suite (test_points.py, test_api.py, conftest.py)
 ├── images/                      # Charts used in this README
 ├── docker-compose.yml           # MySQL 8.4
 ├── docker-compose.ollama.yml    # Ollama LLM server
