@@ -182,12 +182,20 @@ table is a rebuildable cache.
 
 **Points-system models** — served by `GET /api/points-systems`:
 
-| Name | Scale |
-|---|---|
-| Modern (2010–2024) | 25, 18, 15, 12, 10, 8, 6, 4, 2, 1 |
-| Classic (1991–2002) | 10, 6, 4, 3, 2, 1 |
-| Pre-1991 | 9, 6, 4, 3, 2, 1 |
-| Custom | Any list you supply (up to 30 positions) |
+| Key | Name | Scale | Modifiers |
+|---|---|---|---|
+| `modern` | Modern with fastest lap (2019–2024) | 25, 18, 15, 12, 10, 8, 6, 4, 2, 1 | +1 for fastest lap if classified in the top ten; sprint payouts defined but no sprint dataset ships |
+| `modern_no_fl` | Modern (2010–2018) | 25, 18, 15, 12, 10, 8, 6, 4, 2, 1 | No fastest-lap point. 2014 Abu Dhabi's double points are not modelled |
+| `points_2003` | Eight-scorer era (2003–2009) | 10, 8, 6, 5, 4, 3, 2, 1 | First system to pay down to P8 |
+| `classic` | Classic (1991–2002) | 10, 6, 4, 3, 2, 1 | Every round counts |
+| `pre_1991` | Pre-1991 (1961–1990) | 9, 6, 4, 3, 2, 1 | Dropped scores (best N results) are **not** modelled |
+| `custom` | Custom | Any list you supply (up to 30 positions) | Positions only — no fastest-lap or sprint points |
+
+Every entry carries its exact range and modifiers because a points array alone
+does not describe a season: 2010 and 2019 pay the same 25/18/15 and only one of
+them has a fastest-lap point. Sending no `points_system` means "score it the
+modern way, modifiers included"; sending an array means "these positions, and
+nothing else".
 
 **AI models**
 

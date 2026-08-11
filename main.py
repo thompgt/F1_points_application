@@ -672,8 +672,10 @@ async def calculate_standings_api(request: StandingsRequest):
         if standings.empty:
             raise HTTPException(status_code=404, detail=f"No data found for season {request.season_year}")
         
-        # Create visualizations
-        points_system_name = "Custom" if points_system != DEFAULT_POINTS else "Modern"
+        # Create visualizations. The label is baked into every chart title and the
+        # PDF, so it has to name what was actually applied -- comparing against the
+        # resolved list made an explicitly-posted modern array read as "Custom".
+        points_system_name = scoring.points_system_label(request.points_system)
         title_fight_chart = create_title_fight_chart(adjusted_results_with_races, request.season_year, points_system_name)
         cumulative_chart = create_cumulative_points_chart(
             adjusted_results_with_races, request.season_year, points_system_name, request.selected_driver_ids
@@ -698,13 +700,29 @@ async def calculate_standings_api(request: StandingsRequest):
 
 @app.get("/api/points-systems")
 async def get_points_systems():
-    """Get predefined points systems"""
+    """The named points systems, each annotated with its exact range and modifiers.
+
+    "Modern (2010-2024)" was one entry covering fifteen seasons that were not
+    scored the same way: 2010-2018 had no fastest-lap point and 2019 onwards
+    does. The eight-scorer system used from 2003 to 2009 was missing entirely,
+    leaving seven seasons a user could not select at all.
+    """
     return {
         "points_systems": {
-            "modern": {"name": "Modern (2010-2024)", "points": [25, 18, 15, 12, 10, 8, 6, 4, 2, 1]},
-            "classic": {"name": "Classic (1991-2002)", "points": [10, 6, 4, 3, 2, 1]},
-            "pre_1991": {"name": "Pre-1991", "points": [9, 6, 4, 3, 2, 1]},
-            "custom": {"name": "Custom", "points": []}
+            key: {
+                "name": entry["name"],
+                "points": entry["points"],
+                "years": entry["years"],
+                "modifiers": entry["modifiers"],
+            }
+            for key, entry in scoring.NAMED_POINTS_SYSTEMS.items()
+        } | {
+            "custom": {
+                "name": "Custom",
+                "points": [],
+                "years": "n/a",
+                "modifiers": "Positions only -- no fastest-lap point and no sprint points.",
+            }
         }
     }
 
