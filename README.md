@@ -103,7 +103,11 @@ for the standalone recalculation logic that the live app in `main.py` mirrors.)*
   latency, data-load cache hit rate, rate-limit rejections, Ollama call duration
   — and a custom lazy collector that evaluates health gauges at scrape time.
 - **pytest** suite with `httpx`-backed `TestClient`, and 12-factor config via
-  `.env` / `python-dotenv`.
+  `.env` / `python-dotenv`. The scoring rules are covered by unit tests over
+  hand-built frames plus era-level tests that reproduce Ergast's own `points`
+  column exactly, row for row, for 1991–2002 and 2003–2009.
+- **GitHub Actions CI** running ruff and the full suite on every push, across
+  Python 3.11 and 3.13.
 
 ---
 
@@ -140,7 +144,10 @@ F1_points_application/
 ├── season_simulator.py          # Wikipedia RAG + Ollama + scraping + PDF report
 ├── adjusted_points.py           # Standalone pandas recalculation script
 ├── adjusted_points.ipynb        # Exploratory notebook version
+├── ruff.toml                    # Lint config (F + E), enforced by CI
+├── .github/workflows/ci.yml     # Lint + tests on push, Python 3.11 and 3.13
 ├── scripts/
+│   ├── fetch_data.py            # Verify / fetch / regenerate the datasets
 │   ├── seed_mysql.py            # CSV -> MySQL seeder (idempotent)
 │   └── migrate_sqlite_to_postgres.py
 ├── templates/                   # index.html, head_to_head.html, race_detail.html
@@ -336,8 +343,18 @@ To use a different port, run the `uvicorn` command with `--port 8001` (the
 ### 5. Run the tests
 
 ```bash
-pytest
+python scripts/fetch_data.py --check   # confirm the seed CSVs are intact
+ruff check .                           # config in ruff.toml
+pytest                                 # ~2 min; scores whole eras of results.csv
 ```
+
+These are exactly the three commands CI runs — see
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml), which fires on every push
+and pull request across Python 3.11 and 3.13. There is deliberately no MySQL
+service in CI: `load_data()` falls back to the seed CSVs when the database is
+unreachable, and that fallback is the path a fresh clone actually takes, so
+testing against it is testing what people run. A second job imports `main` with
+no `.env` and no database to catch import-time configuration breakage.
 
 ### Using the app
 

@@ -31,3 +31,4 @@ prometheus-fastapi-instrumentator>=7.0.0  # Per-route HTTP metrics + /metrics en
 # Test dependencies
 pytest>=7.4.0
 httpx>=0.24.0  # required by fastapi.testclient.TestClient
+ruff>=0.15.0  # linter; config in ruff.toml, enforced by CI
