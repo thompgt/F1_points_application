@@ -34,6 +34,20 @@ Thumbs.db
 cache.db
 database.db
 
+# Bulk datasets nothing in the app reads. Fetch with:
+#   python scripts/fetch_data.py --fetch-optional
+# The six CSVs load_data() actually falls back to -- results, races, drivers,
+# seasons, constructors, driver_standings -- stay tracked on purpose: they are
+# what makes a fresh clone runnable and what CI tests against.
+lap_times.csv
+constructor_results.csv
+constructor_standings.csv
+circuits.csv
+
+# Derived, not data: adjusted_points.py writes this. Rebuild with
+#   python scripts/fetch_data.py --regenerate-adjusted
+adjusted_results.csv
+
 # Logs
 *.log
 logs/

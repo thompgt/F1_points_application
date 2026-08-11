@@ -160,6 +160,35 @@ F1_points_application/
 └── *.csv                        # Seed datasets (results, races, drivers, ...)
 ```
 
+### Datasets
+
+Six CSVs are tracked in git and are all the app needs: `results`, `races`,
+`drivers`, `seasons`, `constructors`, `driver_standings`. They are the seed data
+for `scripts/seed_mysql.py` and the fallback `load_data()` uses whenever the
+database is unreachable, so a fresh clone runs without any download step.
+
+Four more used to be tracked and no longer are, because nothing in the codebase
+reads them — `lap_times.csv` (18 MB), `constructor_results.csv`,
+`constructor_standings.csv`, `circuits.csv` — along with `adjusted_results.csv`,
+which is *output* from `adjusted_points.py` rather than input, and `database.db`.
+
+```bash
+python scripts/fetch_data.py                     # what's present, what isn't
+python scripts/fetch_data.py --check             # exit 1 if a required CSV is bad
+python scripts/fetch_data.py --fetch-optional    # pull the bulk CSVs from Kaggle
+python scripts/fetch_data.py --regenerate-adjusted
+```
+
+Upstream is the [Kaggle mirror of the Ergast
+database](https://www.kaggle.com/datasets/rohanrao/formula-1-world-championship-1950-2020);
+Ergast itself was retired at the end of 2024.
+
+> **Note on repository size.** These files were untracked going forward with
+> `git rm --cached`; **they are still present in the git history**, so a full
+> `git clone` still transfers roughly 24 MB of them. Removing them properly means
+> rewriting history, which would break every existing clone and fork, so it has
+> not been done. `git clone --depth 1` avoids the cost if you only want the code.
+
 ### Data models
 
 **Seeded F1 tables** — created by `scripts/seed_mysql.py` from the CSVs; these are
