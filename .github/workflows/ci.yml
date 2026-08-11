@@ -17,9 +17,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # 3.11 is the floor the pins in requirements.txt are resolved against;
-        # 3.13 is what the app is developed on.
-        python-version: ["3.11", "3.13"]
+        # One version, because requirements.txt is a lock and a lock is resolved
+        # for one interpreter. It was briefly a 3.11/3.13 matrix and the 3.11 job
+        # failed on `No matching distribution found for numpy==2.5.2` -- numpy 2.5
+        # requires Python >=3.12. Testing a version you cannot install the lock on
+        # tests something nobody deploys.
+        python-version: ["3.13"]
 
     env:
       # No MySQL service here on purpose. load_data() falls back to the seed CSVs

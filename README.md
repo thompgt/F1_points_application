@@ -106,8 +106,7 @@ for the standalone recalculation logic that the live app in `main.py` mirrors.)*
   `.env` / `python-dotenv`. The scoring rules are covered by unit tests over
   hand-built frames plus era-level tests that reproduce Ergast's own `points`
   column exactly, row for row, for 1991–2002 and 2003–2009.
-- **GitHub Actions CI** running ruff and the full suite on every push, across
-  Python 3.11 and 3.13.
+- **GitHub Actions CI** running ruff and the full suite on every push.
 
 ---
 
@@ -145,7 +144,7 @@ F1_points_application/
 ├── adjusted_points.py           # Standalone pandas recalculation script
 ├── adjusted_points.ipynb        # Exploratory notebook version
 ├── ruff.toml                    # Lint config (F + E), enforced by CI
-├── .github/workflows/ci.yml     # Lint + tests on push, Python 3.11 and 3.13
+├── .github/workflows/ci.yml     # Lint + tests on every push
 ├── scripts/
 │   ├── fetch_data.py            # Verify / fetch / regenerate the datasets
 │   ├── seed_mysql.py            # CSV -> MySQL seeder (idempotent)
@@ -300,7 +299,7 @@ are recorded for the Prometheus scrape at `/metrics`.
 
 ### Prerequisites
 
-- Python 3.9+
+- Python 3.13 — the interpreter `requirements.txt` is locked for, and the one CI runs
 - Docker + Docker Compose (for MySQL; also the easiest way to run Ollama)
 - Optional: Redis, if you want the head-to-head response cache
 - Optional: Ollama with `llama3.1:8b` pulled, for the AI season report
@@ -393,7 +392,7 @@ pytest                                 # ~2 min; scores whole eras of results.cs
 
 These are exactly the three commands CI runs — see
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml), which fires on every push
-and pull request across Python 3.11 and 3.13. There is deliberately no MySQL
+and pull request. There is deliberately no MySQL
 service in CI: `load_data()` falls back to the seed CSVs when the database is
 unreachable, and that fallback is the path a fresh clone actually takes, so
 testing against it is testing what people run. A second job imports `main` with
