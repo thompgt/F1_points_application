@@ -326,10 +326,16 @@ health-probe test failed on a commit that changed no application code.
 ### 2. Start and seed the database
 
 ```bash
+cp .env.example .env              # then set the CHANGE_ME_* passwords in it
 docker compose up -d              # mysql:8.4, container f1-mysql, volume f1_mysql_data
-cp .env.example .env              # DATABASE_URL already points at the container
 python scripts/seed_mysql.py      # loads the CSVs into MySQL (one-off)
 ```
+
+The `.env` step comes first and is not optional: `docker-compose.yml` declares
+its credentials as `${MYSQL_PASSWORD:?...}` with no fallback, so compose stops
+with a named-variable error rather than starting a database on a password
+published in this repository. The container publishes on `127.0.0.1:3306`, not
+`0.0.0.0` — set `MYSQL_BIND_HOST` if you genuinely need it reachable off-host.
 
 The seeder is idempotent — it skips tables that already hold rows. Useful flags:
 
@@ -453,11 +459,12 @@ to `.env` and adjust.
 | `ENVIRONMENT` | `development` | `development`, `staging`, or `production` |
 | `API_VERSION` | `1.0.0` | Version reported in the OpenAPI schema |
 | `APP_VERSION` | `1.0.0` | Version reported by the health endpoints |
-| `DATABASE_URL` | `sqlite:///cache.db` | Connection string. `.env.example` sets `mysql+pymysql://f1user:f1pass@localhost:3306/f1`; SQLite and Postgres/Supabase URLs also work |
+| `DATABASE_URL` | `sqlite:///cache.db` | Connection string. `.env.example` sets a `mysql+pymysql://` URL with a placeholder password; SQLite and Postgres/Supabase URLs also work |
 | `CACHE_DB_URL` | — | Fallback used if `DATABASE_URL` is unset |
-| `MYSQL_DATABASE` / `MYSQL_USER` / `MYSQL_PASSWORD` | `f1` / `f1user` / `f1pass` | Credentials `docker-compose.yml` creates the database with — keep in sync with `DATABASE_URL` |
-| `MYSQL_ROOT_PASSWORD` | `f1rootpass` | MySQL root password inside the container |
+| `MYSQL_DATABASE` / `MYSQL_USER` / `MYSQL_PASSWORD` | *(no default)* | Credentials `docker-compose.yml` creates the database with — compose refuses to start until they are set; keep in sync with `DATABASE_URL` |
+| `MYSQL_ROOT_PASSWORD` | *(no default)* | MySQL root password inside the container |
 | `MYSQL_PORT` | `3306` | Host port the MySQL container publishes |
+| `MYSQL_BIND_HOST` | `127.0.0.1` | Interface the MySQL port is published on |
 | `DATA_DIR` | repo root | Directory the seeder reads the CSVs from |
 | `REDIS_URL` | `redis://localhost:6379/0` | Optional Redis cache for head-to-head responses |
 | `H2H_CACHE_TTL_SECONDS` | `3600` | Age at which a cached head-to-head answer is refused, in both Redis and SQL |

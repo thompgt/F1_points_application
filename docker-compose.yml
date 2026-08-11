@@ -1,15 +1,29 @@
+# MySQL for local development.
+#
+# Every credential below is REQUIRED with no default. That is deliberate: the
+# compose file used to supply ${MYSQL_PASSWORD:-f1pass} and friends, so
+# `docker compose up` with no .env silently started a database whose password
+# was published in this repository -- and published it on 0.0.0.0:3306, reachable
+# from anything that can route to the host. Without a default, compose stops and
+# tells you which variable is missing.
+#
+#   cp .env.example .env    # then set real values
+#   docker compose up -d
 services:
   mysql:
     image: mysql:8.4
     container_name: f1-mysql
     restart: unless-stopped
     environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-f1rootpass}
-      MYSQL_DATABASE: ${MYSQL_DATABASE:-f1}
-      MYSQL_USER: ${MYSQL_USER:-f1user}
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-f1pass}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?set MYSQL_ROOT_PASSWORD in .env}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:?set MYSQL_DATABASE in .env}
+      MYSQL_USER: ${MYSQL_USER:?set MYSQL_USER in .env}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?set MYSQL_PASSWORD in .env}
     ports:
-      - "${MYSQL_PORT:-3306}:3306"
+      # Bound to loopback, not 0.0.0.0. This is a development database; nothing
+      # outside the host has any business reaching it. Override MYSQL_BIND_HOST
+      # if you genuinely need it exposed, and use a real password when you do.
+      - "${MYSQL_BIND_HOST:-127.0.0.1}:${MYSQL_PORT:-3306}:3306"
     volumes:
       # Named volume -> the database survives `docker compose down` and container rebuilds.
       - f1_mysql_data:/var/lib/mysql
@@ -17,7 +31,7 @@ services:
       - --local-infile=1
       - --max-allowed-packet=256M
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-p${MYSQL_ROOT_PASSWORD:-f1rootpass}"]
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-p${MYSQL_ROOT_PASSWORD}"]
       interval: 10s
       timeout: 5s
       retries: 12
