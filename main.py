@@ -47,6 +47,7 @@ from middleware import add_middleware_stack, get_logger
 from health import router as health_router
 from prometheus_fastapi_instrumentator import Instrumentator
 import metrics
+import scoring
 
 # Optional Redis
 try:
@@ -129,7 +130,12 @@ Instrumentator(
 # Mount static files and templates
 #app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
-DEFAULT_POINTS = [25, 18, 15, 12, 10, 8, 6, 4, 2, 1]
+DEFAULT_POINTS = scoring.DEFAULT_POINTS
+
+# What "no points_system supplied" means. Not just the array: the modern era also
+# pays a point for the fastest lap, so the default has to carry that modifier or
+# every 2019-2024 season comes out short.
+DEFAULT_RULES = scoring.resolve_points_system("modern")
 FIXED_OLLAMA_MODEL = "llama3.1:8b"
 
 # Note: Request models (StandingsRequest, SimulateSeasonRequest, etc.) are now in validators.py
@@ -198,30 +204,67 @@ def load_data():
 load_data.cache_clear = _load_data_cached.cache_clear
 load_data.cache_info = _load_data_cached.cache_info
 
-def adjust_points(results_df, points_system):
-    """Adjust the points in the results DataFrame to the specified points system"""
-    adjusted_results = results_df.copy()
-    adjusted_results['adjusted_points'] = 0
+# The scoring rules themselves live in scoring.py, where they can be tested
+# without booting the app -- see tests/test_points.py. Re-exported under the
+# names the rest of this module already used.
+adjust_points = scoring.adjust_points
+calculate_standings = scoring.calculate_standings
 
-    for i, points in enumerate(points_system, start=1):
-        adjusted_results.loc[adjusted_results['positionOrder'] == i, 'adjusted_points'] = points
 
-    return adjusted_results
+@lru_cache(maxsize=16)
+def _build_enriched_results(rules, season):
+    """Score the results and join on driver, constructor and race metadata.
 
-def calculate_standings(adjusted_results_with_races, season_year):
-    """Calculate the standings for a given season"""
-    season_results = adjusted_results_with_races[adjusted_results_with_races['year'] == season_year]
-    
-    if season_results.empty:
-        return pd.DataFrame()
-    
-    standings = season_results.groupby(['surname', 'forename'], as_index=False)['adjusted_points'].sum()
-    standings['driver_label'] = standings.apply(lambda row: f"{row['forename'][0]}. {row['surname']}", axis=1)
-    standings = standings.sort_values(by='adjusted_points', ascending=False).reset_index(drop=True)
-    standings.index += 1
-    standings.reset_index(inplace=True)
-    standings.rename(columns={'index': 'Position'}, inplace=True)
-    return standings
+    Four endpoints used to carry a near-verbatim copy of this block, each one
+    scoring and merging all 26k rows on every request only to filter to a single
+    season immediately afterwards. Filtering first is the whole optimisation:
+    a season is ~400 rows, so the three merges go from 26k-row joins to 400-row
+    ones.
+
+    Cached on (rules, season). ``rules`` is either a frozen ScoringRules or a
+    tuple of points, both hashable; ``season`` of None means the full dataset,
+    which the head-to-head cumulative chart still needs.
+    """
+    results, races, drivers, _, constructors, _ = load_data()
+
+    if season is not None:
+        season_race_ids = races.loc[races['year'] == season, 'raceId']
+        results = results[results['raceId'].isin(season_race_ids)]
+
+    adjusted = adjust_points(results, rules, races=races)
+
+    adjusted = pd.merge(
+        adjusted,
+        drivers[['driverId', 'surname', 'forename']],
+        on='driverId'
+    )
+    adjusted = pd.merge(
+        adjusted,
+        constructors[['constructorId', 'name']].rename(columns={'name': 'constructor_name'}),
+        on='constructorId'
+    )
+
+    race_cols = ['raceId', 'year', 'name']
+    if 'round' in races.columns:
+        race_cols.append('round')
+
+    return pd.merge(adjusted, races[race_cols], on='raceId')
+
+
+def build_enriched_results(points_system=None, season=None):
+    """Cache-fronted wrapper: normalises the points argument and hands back a copy.
+
+    The copy matters -- callers slice, assign and sort the frame they get, and a
+    mutation would otherwise be visible to every later request that hit the same
+    cache entry.
+    """
+    if points_system is None:
+        rules = DEFAULT_RULES
+    elif isinstance(points_system, scoring.ScoringRules):
+        rules = points_system
+    else:
+        rules = tuple(points_system)
+    return _build_enriched_results(rules, season).copy()
 
 
 def create_title_fight_chart(adjusted_results_with_races, season_year, points_system_name):
@@ -596,45 +639,16 @@ async def get_seasons():
 async def calculate_standings_api(request: StandingsRequest):
     """Calculate standings for a given season with optional custom points system"""
     try:
-        if request.points_system is None:
-            points_system = DEFAULT_POINTS
-        else:
-            points_system = request.points_system
-        
-        results, races, drivers, _, constructors, _ = load_data()
+        points_system = DEFAULT_POINTS if request.points_system is None else request.points_system
 
         # Everything from the points adjustment through the standings groupby is
         # the actual "calculate" work, timed as one unit and split by which points
         # system was applied -- a pre-1991 array touches 6 positions, the modern
         # one 10, and the charts downstream are excluded on purpose.
         with metrics.observe_points_calculation(request.points_system):
-            # Adjust points
-            adjusted_results = adjust_points(results, points_system)
-
-            # Merge with driver and race and constructor information
-            adjusted_results_with_drivers = pd.merge(
-                adjusted_results,
-                drivers[['driverId', 'surname', 'forename']],
-                on='driverId'
+            adjusted_results_with_races = build_enriched_results(
+                request.points_system, season=request.season_year
             )
-
-            adjusted_results_with_constructors = pd.merge(
-                adjusted_results_with_drivers,
-                constructors[['constructorId', 'name']].rename(columns={'name': 'constructor_name'}),
-                on='constructorId'
-            )
-
-            race_cols = ['raceId', 'year', 'name']
-            if 'round' in races.columns:
-                race_cols.append('round')
-
-            adjusted_results_with_races = pd.merge(
-                adjusted_results_with_constructors,
-                races[race_cols],
-                on='raceId'
-            )
-
-            # Calculate standings
             standings = calculate_standings(adjusted_results_with_races, request.season_year)
 
         # Determine primary constructor per driver in the selected season (mode by count of appearances)
@@ -882,23 +896,11 @@ async def api_head_to_head(driver1_id: int, driver2_id: int, season: Optional[in
     try:
         # Season-only mode (career comparisons disabled).
         mode = 'season'
-        results, races, drivers, seasons, constructors, _ = load_data()
+        _, races, drivers, seasons, _, _ = load_data()
 
-        # Merge driver and race info
-        df = results.copy()
-        df = pd.merge(df, drivers[['driverId', 'forename', 'surname']], on='driverId', how='left')
-        race_cols = ['raceId', 'year', 'name']
-        if 'round' in races.columns:
-            race_cols.append('round')
-        df = pd.merge(df, races[race_cols], on='raceId', how='left')
-        df = pd.merge(df, constructors[['constructorId', 'name']].rename(columns={'name': 'constructor_name'}), on='constructorId', how='left')
-
-        # Adjust points (use default modern system)
-        df = adjust_points(df, DEFAULT_POINTS)
-
-        # Filter by mode
-        if mode == 'season' and season is not None:
-            df = df[df['year'] == int(season)].copy()
+        # Scored and joined once, on the default modern rules, filtered to the
+        # requested season inside the builder rather than after a 26k-row join.
+        df = build_enriched_results(season=int(season) if season is not None else None)
 
         # Try cache (Redis first, then SQLite)
         cache_key = f"h2h:v2:{driver1_id}:{driver2_id}:{season}:{mode}"
@@ -1268,27 +1270,11 @@ async def api_head_to_head(driver1_id: int, driver2_id: int, season: Optional[in
 
         # Build cumulative chart JSON for the two drivers using existing function
         try:
-            # Need adjusted_results_with_races similar to calculate_standings_api
-            adjusted_results = adjust_points(results, DEFAULT_POINTS)
-            adjusted_results_with_drivers = pd.merge(
-                adjusted_results,
-                drivers[['driverId', 'surname', 'forename']],
-                on='driverId'
+            # `df` is already the scored, joined frame for this season.
+            chart_year = int(season) if season else int(df['year'].min())
+            cumulative_chart = create_cumulative_points_chart(
+                df, chart_year, scoring.points_system_label(None), [int(driver1_id), int(driver2_id)]
             )
-            adjusted_results_with_constructors = pd.merge(
-                adjusted_results_with_drivers,
-                constructors[['constructorId', 'name']].rename(columns={'name': 'constructor_name'}),
-                on='constructorId'
-            )
-            race_cols = ['raceId', 'year', 'name']
-            if 'round' in races.columns:
-                race_cols.append('round')
-            adjusted_results_with_races = pd.merge(
-                adjusted_results_with_constructors,
-                races[race_cols],
-                on='raceId'
-            )
-            cumulative_chart = create_cumulative_points_chart(adjusted_results_with_races, int(season) if season else adjusted_results_with_races['year'].min(), 'Modern', [int(driver1_id), int(driver2_id)])
         except Exception:
             cumulative_chart = None
 
@@ -1402,43 +1388,13 @@ async def simulate_season_endpoint(request: SimulateSeasonRequest):
         ollama_model = FIXED_OLLAMA_MODEL
         
         # Get points system
-        if request.points_system is None:
-            points_system = DEFAULT_POINTS
-            points_system_name = "Modern"
-        else:
-            points_system = request.points_system
-            points_system_name = "Custom"
-        
-        # Load data and calculate standings
-        results, races, drivers, _, constructors, _ = load_data()
+        points_system = DEFAULT_POINTS if request.points_system is None else request.points_system
+        points_system_name = scoring.points_system_label(request.points_system)
 
         with metrics.observe_points_calculation(request.points_system):
-            adjusted_results = adjust_points(results, points_system)
-
-            # Merge with driver and race and constructor information
-            adjusted_results_with_drivers = pd.merge(
-                adjusted_results,
-                drivers[['driverId', 'surname', 'forename']],
-                on='driverId'
+            adjusted_results_with_races = build_enriched_results(
+                request.points_system, season=request.season_year
             )
-
-            adjusted_results_with_constructors = pd.merge(
-                adjusted_results_with_drivers,
-                constructors[['constructorId', 'name']].rename(columns={'name': 'constructor_name'}),
-                on='constructorId'
-            )
-
-            race_cols = ['raceId', 'year', 'name']
-            if 'round' in races.columns:
-                race_cols.append('round')
-
-            adjusted_results_with_races = pd.merge(
-                adjusted_results_with_constructors,
-                races[race_cols],
-                on='raceId'
-            )
-
-            # Calculate standings
             standings = calculate_standings(adjusted_results_with_races, request.season_year)
         
         # Determine primary constructor per driver
