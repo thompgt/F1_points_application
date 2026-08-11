@@ -4,6 +4,7 @@ Includes error handling, rate limiting, logging, and request tracking.
 """
 
 import time
+import ipaddress
 import logging
 import uuid
 import contextvars
@@ -215,10 +216,37 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
 # Rate Limiting Middleware
 # ============================================================================
 
+def _parse_trusted_proxies(raw: Optional[str]):
+    """Parse TRUSTED_PROXIES into networks. Empty means trust nothing.
+
+    Accepts single addresses and CIDR blocks, comma-separated, e.g.
+    "10.0.0.0/8, 127.0.0.1". Anything unparseable is dropped with a warning
+    rather than silently widening or narrowing what gets trusted.
+    """
+    networks = []
+    for entry in (raw or "").split(","):
+        entry = entry.strip()
+        if not entry:
+            continue
+        try:
+            networks.append(ipaddress.ip_network(entry, strict=False))
+        except ValueError:
+            logger.warning("Ignoring unparseable TRUSTED_PROXIES entry: %r", entry)
+    return networks
+
+
 class RateLimitMiddleware(BaseHTTPMiddleware):
     """
     Simple in-memory rate limiting middleware.
-    For production, use Redis-based rate limiting.
+
+    Two caveats worth knowing before relying on this in production:
+
+    * Counters are per-process. Run four uvicorn workers and the effective limit
+      is four times what is configured. Moving the buckets into Redis would fix
+      it; Redis is an optional dependency here, so this has not been done.
+    * The limiter is only as trustworthy as TRUSTED_PROXIES. Deployed behind a
+      load balancer with that unset, every request appears to come from the load
+      balancer and shares one bucket.
     """
 
     def __init__(
@@ -226,26 +254,56 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         app: FastAPI,
         requests_per_minute: int = 60,
         requests_per_hour: int = 1000,
-        burst_limit: int = 10
+        burst_limit: int = 10,
+        trusted_proxies: Optional[str] = None,
     ):
         super().__init__(app)
         self.requests_per_minute = requests_per_minute
         self.requests_per_hour = requests_per_hour
         self.burst_limit = burst_limit
-        
+        self.trusted_proxies = _parse_trusted_proxies(trusted_proxies)
+
         # In-memory storage (use Redis in production)
         self.minute_requests: dict = defaultdict(list)
         self.hour_requests: dict = defaultdict(list)
 
+    def _peer_is_trusted_proxy(self, host: str) -> bool:
+        if not self.trusted_proxies:
+            return False
+        try:
+            address = ipaddress.ip_address(host)
+        except ValueError:
+            return False
+        return any(address in network for network in self.trusted_proxies)
+
     def _get_client_id(self, request: Request) -> str:
-        """Get client identifier from request."""
-        # Try X-Forwarded-For header first (for proxied requests)
-        forwarded = request.headers.get("X-Forwarded-For")
-        if forwarded:
-            return forwarded.split(",")[0].strip()
-        
-        # Fall back to client host
-        return request.client.host if request.client else "unknown"
+        """Identify the client, trusting X-Forwarded-For only behind a known proxy.
+
+        The header used to be honoured unconditionally, which makes the limiter
+        decorative: any client sends a fresh value and gets a fresh bucket, so
+        the thing meant to cap request rates could be stepped around with one
+        header. Worse, a spoofed value is also the dictionary key, so an attacker
+        could grow the two defaultdicts without bound.
+
+        X-Forwarded-For is appended to by each hop, so the right-hand entries are
+        the ones added by infrastructure you control. Walk it from the right,
+        discard entries contributed by trusted proxies, and the first thing left
+        is the furthest hop this deployment can actually vouch for. With no
+        TRUSTED_PROXIES configured, nothing is trusted and only the real peer
+        address is used.
+        """
+        peer = request.client.host if request.client else "unknown"
+        if not self._peer_is_trusted_proxy(peer):
+            return peer
+
+        forwarded = request.headers.get("X-Forwarded-For", "")
+        for candidate in reversed([entry.strip() for entry in forwarded.split(",") if entry.strip()]):
+            if not self._peer_is_trusted_proxy(candidate):
+                return candidate
+
+        # Every hop in the chain was a trusted proxy, so there is no client
+        # address to attribute this to beyond the proxy itself.
+        return peer
 
     def _cleanup_old_requests(self, client_id: str, current_time: float):
         """Remove expired request timestamps."""
@@ -389,7 +447,8 @@ def add_middleware_stack(app: FastAPI, config: Optional[dict] = None):
             RateLimitMiddleware,
             requests_per_minute=config.get('requests_per_minute', 60),
             requests_per_hour=config.get('requests_per_hour', 1000),
-            burst_limit=config.get('burst_limit', 10)
+            burst_limit=config.get('burst_limit', 10),
+            trusted_proxies=config.get('trusted_proxies'),
         )
     
     # 3. Request logging

@@ -101,7 +101,11 @@ add_middleware_stack(app, {
     'enable_rate_limiting': ENABLE_RATE_LIMITING,
     'requests_per_minute': int(os.getenv('RATE_LIMIT_PER_MINUTE', '60')),
     'requests_per_hour': int(os.getenv('RATE_LIMIT_PER_HOUR', '1000')),
-    'burst_limit': int(os.getenv('RATE_LIMIT_BURST', '10'))
+    'burst_limit': int(os.getenv('RATE_LIMIT_BURST', '10')),
+    # Empty by default: X-Forwarded-For is ignored unless the immediate peer is
+    # a proxy you have named here. Set it to your load balancer's address range
+    # when deploying behind one, or per-client limits collapse into one bucket.
+    'trusted_proxies': os.getenv('TRUSTED_PROXIES', ''),
 })
 
 # Include health check routes

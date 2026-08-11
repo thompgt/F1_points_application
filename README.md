@@ -465,6 +465,7 @@ to `.env` and adjust.
 | `RATE_LIMIT_PER_MINUTE` | `60` | Requests per minute per client |
 | `RATE_LIMIT_PER_HOUR` | `1000` | Requests per hour per client |
 | `RATE_LIMIT_BURST` | `10` | Max requests per second per client |
+| `TRUSTED_PROXIES` | *(empty)* | Comma-separated IPs/CIDRs whose `X-Forwarded-For` the rate limiter will believe. Empty means the header is ignored entirely |
 | `CORS_ORIGINS` | `*` | Comma-separated allowed origins. Credentials are only enabled for non-wildcard origins |
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama server used by `/api/simulate-season` |
 | `ENABLE_FASTF1_QUALI_GAP` | `false` | Opt-in: fetch per-driver-pair qualifying telemetry via `fastf1` for `/api/head-to-head`. Adds external network calls and can slow responses |

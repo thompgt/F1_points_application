@@ -387,3 +387,56 @@ def test_h2h_cache_read_survives_a_broken_backend(monkeypatch):
     assert main.h2h_cache_get('h2h:test:broken', 999007, 999008, 1999, 'season') is None
     after = main.metrics.h2h_cache_total.labels(backend='redis', outcome='error')._value.get()
     assert after == before + 1, "a broken cache went unrecorded"
+
+
+# ============================================================================
+# Rate limiter client identification
+# ============================================================================
+
+def _limiter(trusted=None):
+    from middleware import RateLimitMiddleware
+
+    return RateLimitMiddleware(app=None, trusted_proxies=trusted)
+
+
+class _FakeRequest:
+    def __init__(self, peer, forwarded=None):
+        self.client = type('C', (), {'host': peer})()
+        self.headers = {'X-Forwarded-For': forwarded} if forwarded else {}
+
+
+def test_forwarded_header_is_ignored_from_an_untrusted_peer():
+    """Otherwise the limiter is decorative: one header buys a fresh bucket."""
+    limiter = _limiter()
+    request = _FakeRequest('203.0.113.9', forwarded='1.2.3.4')
+    assert limiter._get_client_id(request) == '203.0.113.9'
+
+
+def test_forwarded_header_is_honoured_behind_a_trusted_proxy():
+    limiter = _limiter('10.0.0.0/8')
+    request = _FakeRequest('10.1.2.3', forwarded='203.0.113.9')
+    assert limiter._get_client_id(request) == '203.0.113.9'
+
+
+def test_spoofed_entries_left_of_the_real_client_are_discarded():
+    """A client can prepend anything; only the right-hand hops are trustworthy.
+
+    Here the client claims to be 9.9.9.9, the real edge saw 203.0.113.9, and the
+    internal proxy chain is ours. Walking from the right past the trusted hops
+    lands on 203.0.113.9, not the value the client made up.
+    """
+    limiter = _limiter('10.0.0.0/8')
+    request = _FakeRequest('10.1.2.3', forwarded='9.9.9.9, 203.0.113.9, 10.4.5.6')
+    assert limiter._get_client_id(request) == '203.0.113.9'
+
+
+def test_a_garbage_forwarded_value_does_not_mint_a_bucket():
+    limiter = _limiter()
+    request = _FakeRequest('203.0.113.9', forwarded='not-an-ip')
+    assert limiter._get_client_id(request) == '203.0.113.9'
+
+
+def test_unparseable_trusted_proxy_entries_are_dropped_not_trusted():
+    limiter = _limiter('not-a-network, 10.0.0.0/8')
+    assert limiter._peer_is_trusted_proxy('10.1.2.3') is True
+    assert limiter._peer_is_trusted_proxy('203.0.113.9') is False
