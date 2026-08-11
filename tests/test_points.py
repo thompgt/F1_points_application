@@ -14,7 +14,6 @@ import scoring
 from scoring import (
     DEFAULT_POINTS,
     NAMED_POINTS_SYSTEMS,
-    ScoringRules,
     adjust_points,
     calculate_standings,
     points_system_label,

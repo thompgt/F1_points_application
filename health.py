@@ -4,10 +4,9 @@ Provides Kubernetes-compatible health probes.
 """
 
 from datetime import datetime
-from typing import Optional
 import os
 
-from fastapi import APIRouter, Depends, Response
+from fastapi import APIRouter, Response
 from pydantic import BaseModel
 from sqlalchemy import text
 

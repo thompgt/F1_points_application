@@ -34,7 +34,7 @@ SrcSession = sessionmaker(bind=src_engine)
 DstSession = sessionmaker(bind=dst_engine)
 
 # reflect source table
-from sqlalchemy import MetaData, Table
+from sqlalchemy import MetaData
 meta = MetaData()
 meta.reflect(bind=src_engine)
 if 'head_to_head_cache' not in meta.tables:

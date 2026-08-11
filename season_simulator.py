@@ -10,7 +10,7 @@ import wikipediaapi
 import chromadb
 from typing import List, Dict, Optional
 from PIL import Image
-from reportlab.lib.pagesizes import letter, A4
+from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image as RLImage, PageBreak, Table, TableStyle
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
@@ -38,7 +38,7 @@ class SeasonSimulator:
         # Initialize or get ChromaDB collection
         try:
             self.collection = chroma_client.get_collection("f1_seasons")
-        except:
+        except Exception:
             self.collection = chroma_client.create_collection(
                 name="f1_seasons",
                 metadata={"description": "F1 season summaries from Wikipedia"}
@@ -102,7 +102,7 @@ class SeasonSimulator:
         try:
             results = self.collection.get(ids=[f"season_{season_year}"])
             return len(results['ids']) > 0
-        except:
+        except Exception:
             return False
     
     def scrape_season_images(self, season_year: int, max_images: int = 5) -> List[str]:
@@ -360,7 +360,7 @@ Write in an engaging, informative style suitable for a professional report."""
                             rl_img = RLImage(img_byte_arr, width=5*inch, height=3*inch)
                             story.append(rl_img)
                             story.append(Spacer(1, 0.3*inch))
-                        except:
+                        except Exception:
                             pass
             
             # Build PDF

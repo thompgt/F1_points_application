@@ -10,7 +10,6 @@ import contextvars
 from datetime import datetime
 from typing import Callable, Optional
 from collections import defaultdict
-from functools import wraps
 
 from fastapi import FastAPI, Request, Response, HTTPException
 from fastapi.responses import JSONResponse

@@ -1,0 +1,28 @@
+# Lint configuration, enforced by .github/workflows/ci.yml.
+#
+# Deliberately narrow: pyflakes (F) plus pycodestyle errors (E). The point is to
+# catch the things that are actually bugs -- undefined names, unused imports that
+# hide a deleted dependency, bare excepts that swallow KeyboardInterrupt -- not to
+# reformat a working codebase.
+line-length = 120
+target-version = "py311"
+
+[lint]
+# W (whitespace) is left out on purpose: it flags ~150 trailing-whitespace and
+# blank-line-with-spaces hits across files nobody is otherwise touching, and
+# fixing them all would bury real changes under a whole-repo reformat diff.
+select = ["F", "E"]
+ignore = [
+    # main.py, health.py and season_simulator.py all call load_dotenv() before
+    # importing modules that read settings at import time, so imports genuinely
+    # cannot all sit at the top of the file.
+    "E402",
+    # Long lines are everywhere in the chart-building code and wrapping them
+    # would not make a Plotly layout dict easier to read.
+    "E501",
+]
+
+[lint.per-file-ignores]
+# The notebook-adjacent script is kept in sync with scoring.py by hand; see the
+# module docstring there.
+"adjusted_points.py" = ["E402"]

@@ -7,14 +7,11 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from fastapi import FastAPI, HTTPException, Query
-from fastapi import Depends
-from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import HTMLResponse, FileResponse
 from fastapi.requests import Request
 from fastapi.middleware.cors import CORSMiddleware
 import pandas as pd
-import plotly.graph_objects as go
 import plotly.express as px
 from plotly.utils import PlotlyJSONEncoder
 # Optional fastf1 support for qualifying lap time gaps
@@ -23,25 +20,19 @@ try:
     FASTF1_AVAILABLE = True
 except Exception:
     FASTF1_AVAILABLE = False
-from plotly.subplots import make_subplots
 import json
 import time
-import plotly.io as pio
 from typing import List, Optional
 import warnings
 from functools import lru_cache
 from season_simulator import simulate_season
 from db import init_db, HeadToHeadCache, SessionLocal, engine
-import sqlalchemy
 
 # Import new modules for validation, middleware, and health checks
 from validators import (
     StandingsRequest,
     SimulateSeasonRequest,
-    RaceResultsRequest,
-    HeadToHeadRequest,
-    sanitize_string,
-    InputValidator
+    RaceResultsRequest
 )
 from middleware import add_middleware_stack, get_logger
 from health import router as health_router
@@ -373,7 +364,6 @@ def create_cumulative_points_chart(adjusted_results_with_races, season_year, poi
     season_results_filtered = season_results_filtered.sort_values(['driver_label', 'race_number'])
     
     # Create the plot
-    title_suffix = 'Selected Drivers' if selected_driver_ids else 'Top 10 Drivers'
     fig = px.line(
         season_results_filtered,
         x='race_number',
@@ -1417,7 +1407,6 @@ async def simulate_season_endpoint(request: SimulateSeasonRequest):
         ollama_model = FIXED_OLLAMA_MODEL
         
         # Get points system
-        points_system = DEFAULT_POINTS if request.points_system is None else request.points_system
         points_system_name = scoring.points_system_label(request.points_system)
 
         with metrics.observe_points_calculation(request.points_system):
