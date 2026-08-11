@@ -536,6 +536,17 @@ def create_race_results_timeline_chart(adjusted_results_with_races, season_year,
     if season_results.empty:
         return None
     
+    # Where to plot a car that did not finish. A fixed 20 put DNFs *ahead* of
+    # classified finishers in any season with a bigger grid -- 22 to 26 through
+    # the 1990s, 30-odd in the 1950s. Use one place behind the last entrant of
+    # that particular race instead, computed before the driver filter below so
+    # it reflects the whole field rather than the drivers on screen.
+    entrants_per_race = season_results.groupby('raceId')['driverId'].nunique()
+    dnf_position = season_results['raceId'].map(entrants_per_race).fillna(20) + 1
+    season_results['plot_position'] = (
+        scoring.classified_position(season_results).fillna(dnf_position).astype(int)
+    )
+
     # Use 'round' column if available
     if 'round' in season_results.columns:
         season_results['race_number'] = season_results['round']
@@ -543,7 +554,7 @@ def create_race_results_timeline_chart(adjusted_results_with_races, season_year,
         race_order = season_results[['raceId']].drop_duplicates().sort_values('raceId').reset_index(drop=True)
         race_order['race_number'] = race_order.index + 1
         season_results = pd.merge(season_results, race_order, on='raceId')
-    
+
     # Create driver label
     season_results['driver_label'] = season_results['forename'] + ' ' + season_results['surname']
     
@@ -567,10 +578,10 @@ def create_race_results_timeline_chart(adjusted_results_with_races, season_year,
     fig = px.line(
         season_results,
         x='race_number',
-        y='positionOrder',
+        y='plot_position',
         color='driver_label',
         title=f'Race Results Timeline - {season_year} Season',
-        labels={'race_number': 'Race Number', 'positionOrder': 'Finishing Position', 'driver_label': 'Driver'},
+        labels={'race_number': 'Race Number', 'plot_position': 'Finishing Position', 'driver_label': 'Driver'},
         markers=True
     )
     
@@ -589,7 +600,7 @@ def create_race_results_timeline_chart(adjusted_results_with_races, season_year,
     for driver_label in season_results['driver_label'].unique():
         grp = season_results[season_results['driver_label'] == driver_label]
         x = grp['race_number'].astype(int).tolist()
-        y = grp['positionOrder'].fillna(20).astype(int).tolist()  # Use 20 for DNF
+        y = grp['plot_position'].astype(int).tolist()
         traces.append({
             'x': x,
             'y': y,
