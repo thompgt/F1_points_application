@@ -447,6 +447,7 @@ to `.env` and adjust.
 | `MYSQL_PORT` | `3306` | Host port the MySQL container publishes |
 | `DATA_DIR` | repo root | Directory the seeder reads the CSVs from |
 | `REDIS_URL` | `redis://localhost:6379/0` | Optional Redis cache for head-to-head responses |
+| `H2H_CACHE_TTL_SECONDS` | `3600` | Age at which a cached head-to-head answer is refused, in both Redis and SQL |
 | `ENABLE_RATE_LIMITING` | `true` | Toggle the in-memory rate limiter |
 | `RATE_LIMIT_PER_MINUTE` | `60` | Requests per minute per client |
 | `RATE_LIMIT_PER_HOUR` | `1000` | Requests per hour per client |

@@ -79,10 +79,11 @@ def get_environment() -> str:
 def check_database() -> dict:
     """Check database connectivity and status."""
     try:
-        db = SessionLocal()
-        # Execute a simple query to verify connection
-        db.execute(text("SELECT 1"))
-        db.close()
+        # `with`, not close(): this probe runs precisely when the database is
+        # misbehaving, and a bare close() is skipped on the exception path -- so
+        # the health check itself would leak a connection per failed poll.
+        with SessionLocal() as db:
+            db.execute(text("SELECT 1"))
         return {
             "status": "connected",
             # mysql / postgresql / sqlite -- report what's actually configured

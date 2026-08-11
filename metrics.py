@@ -16,6 +16,7 @@ than the concrete path, for the same reason.
 
 from __future__ import annotations
 
+import logging
 import time
 from contextlib import contextmanager
 from typing import Callable, Iterable, Optional, Sequence
@@ -135,6 +136,39 @@ def record_error(exc: BaseException, status_code: int) -> None:
     errors_total.labels(
         exception=type(exc).__name__, status_code=str(status_code)
     ).inc()
+
+
+# ============================================================================
+# Head-to-head response cache
+# ============================================================================
+
+h2h_cache_total = Counter(
+    "f1_h2h_cache_total",
+    "Head-to-head cache lookups and writes, by backend and outcome.",
+    # backend: redis | sql
+    # outcome: hit | miss | stale | write | error
+    labelnames=("backend", "outcome"),
+)
+
+for _backend in ("redis", "sql"):
+    for _outcome in ("hit", "miss", "stale", "write", "error"):
+        h2h_cache_total.labels(backend=_backend, outcome=_outcome)
+
+
+def record_cache_event(backend: str, outcome: str, exc: Optional[BaseException] = None) -> None:
+    """Count a cache event, and log it when it was a failure.
+
+    The cache paths used to be five nested `except Exception: pass` blocks, so a
+    Redis that had fallen over looked exactly like a cache miss: same latency
+    profile, same correct answers, no signal anywhere. Counting by outcome makes
+    a dead backend show up as a cliff in `hit` and a step in `error`.
+    """
+    h2h_cache_total.labels(backend=backend, outcome=outcome).inc()
+    if exc is not None:
+        logging.getLogger("f1_api").warning(
+            "head-to-head %s cache %s: %s: %s",
+            backend, outcome, type(exc).__name__, exc,
+        )
 
 
 # ============================================================================

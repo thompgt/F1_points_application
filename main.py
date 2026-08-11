@@ -22,6 +22,7 @@ except Exception:
     FASTF1_AVAILABLE = False
 import json
 import time
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 import warnings
 from functools import lru_cache
@@ -735,11 +736,10 @@ async def get_races(
     try:
         from db import Race, store_races, SessionLocal
         _, races_csv, _, _, _, _ = load_data()
-        # Try DB first
-        db = SessionLocal()
-        db_races = db.query(Race).filter_by(year=season).order_by(Race.round).all()
-        db.close()
-        if db_races:
+        # Try DB first. `with` rather than a bare close() so the connection goes
+        # back to the pool even when the query raises -- under MySQL's pool a
+        # leak per failed request exhausts it.
+        with SessionLocal() as db:
             race_list = [
                 {
                     "raceId": r.raceId,
@@ -748,8 +748,9 @@ async def get_races(
                     "round": r.round,
                     "date": r.date,
                     "circuitId": r.circuitId
-                } for r in db_races
+                } for r in db.query(Race).filter_by(year=season).order_by(Race.round).all()
             ]
+        if race_list:
             return {"races": race_list}
         # Fallback to CSV
         season_races = races_csv[races_csv['year'] == season].copy()
@@ -904,6 +905,128 @@ async def get_drivers(
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
+# How long a cached head-to-head answer stays good. Redis always had an hour;
+# the SQL rows had no expiry at all, so once the underlying data was re-seeded
+# the SQL cache served the old answer forever.
+H2H_CACHE_TTL_SECONDS = int(os.getenv('H2H_CACHE_TTL_SECONDS', str(60 * 60)))
+
+
+def _payload_matches_current_schema(payload) -> bool:
+    """Reject rows written before the current head-to-head response shape."""
+    return (
+        isinstance(payload, dict)
+        and isinstance(payload.get('driver1_stats'), dict)
+        and 'avg_finish' in payload['driver1_stats']
+        and 'radar_scores' in payload['driver1_stats']
+    )
+
+
+def h2h_cache_get(cache_key, driver1_id, driver2_id, season, mode):
+    """Read a cached head-to-head payload, or None.
+
+    Redis first, then SQL. Both are best-effort -- a dead cache must not break
+    the endpoint -- but "best-effort" used to mean five nested
+    `except Exception: pass` blocks, so a broken backend was indistinguishable
+    from a miss. Failures are now logged and counted.
+    """
+    if REDIS_CLIENT:
+        try:
+            cached = REDIS_CLIENT.get(cache_key)
+            if cached:
+                payload = json.loads(cached)
+                if _payload_matches_current_schema(payload):
+                    metrics.record_cache_event('redis', 'hit')
+                    return payload
+                metrics.record_cache_event('redis', 'stale')
+            else:
+                metrics.record_cache_event('redis', 'miss')
+        except Exception as exc:
+            metrics.record_cache_event('redis', 'error', exc)
+
+    try:
+        cutoff = datetime.now(timezone.utc) - timedelta(seconds=H2H_CACHE_TTL_SECONDS)
+        with SessionLocal() as db:
+            row = (
+                db.query(HeadToHeadCache)
+                .filter_by(driver1_id=driver1_id, driver2_id=driver2_id, season=season, mode=mode)
+                .order_by(HeadToHeadCache.created_at.desc())
+                .first()
+            )
+            if row is None or not row.response_json:
+                metrics.record_cache_event('sql', 'miss')
+                return None
+
+            # created_at comes back naive on SQLite and aware on MySQL; normalise
+            # before comparing or this raises instead of expiring anything.
+            created_at = row.created_at
+            if created_at is not None and created_at.tzinfo is None:
+                created_at = created_at.replace(tzinfo=timezone.utc)
+            if created_at is None or created_at < cutoff:
+                metrics.record_cache_event('sql', 'stale')
+                return None
+
+            payload = json.loads(row.response_json)
+            if not _payload_matches_current_schema(payload):
+                metrics.record_cache_event('sql', 'stale')
+                return None
+            metrics.record_cache_event('sql', 'hit')
+            return payload
+    except Exception as exc:
+        metrics.record_cache_event('sql', 'error', exc)
+    return None
+
+
+def h2h_cache_put(cache_key, driver1_id, driver2_id, season, mode, response):
+    """Write a head-to-head payload to both caches.
+
+    The SQL side upserts on the key tuple. It used to INSERT on every miss and
+    read back the newest row, so the table grew a row per request forever and
+    nothing ever pruned it.
+    """
+    try:
+        serialized = json.dumps(response)
+    except Exception as exc:
+        metrics.record_cache_event('sql', 'error', exc)
+        return
+
+    if REDIS_CLIENT:
+        try:
+            REDIS_CLIENT.set(cache_key, serialized, ex=H2H_CACHE_TTL_SECONDS)
+            metrics.record_cache_event('redis', 'write')
+        except Exception as exc:
+            metrics.record_cache_event('redis', 'error', exc)
+
+    try:
+        with SessionLocal() as db:
+            existing = (
+                db.query(HeadToHeadCache)
+                .filter_by(driver1_id=driver1_id, driver2_id=driver2_id, season=season, mode=mode)
+                .order_by(HeadToHeadCache.created_at.desc())
+                .all()
+            )
+            if existing:
+                # Keep the newest row and refresh it in place; drop any duplicates
+                # an earlier insert-per-miss build left behind.
+                keeper, duplicates = existing[0], existing[1:]
+                keeper.response_json = serialized
+                keeper.created_at = datetime.now(timezone.utc)
+                for duplicate in duplicates:
+                    db.delete(duplicate)
+            else:
+                db.add(HeadToHeadCache(
+                    driver1_id=driver1_id,
+                    driver2_id=driver2_id,
+                    season=season,
+                    mode=mode,
+                    response_json=serialized,
+                    created_at=datetime.now(timezone.utc),
+                ))
+            db.commit()
+            metrics.record_cache_event('sql', 'write')
+    except Exception as exc:
+        metrics.record_cache_event('sql', 'error', exc)
+
+
 @app.get('/api/head-to-head')
 async def api_head_to_head(driver1_id: int, driver2_id: int, season: Optional[int] = None, mode: Optional[str] = 'season'):
     """Return season head-to-head statistics for two drivers."""
@@ -921,32 +1044,11 @@ async def api_head_to_head(driver1_id: int, driver2_id: int, season: Optional[in
         # requested season inside the builder rather than after a 26k-row join.
         df = build_enriched_results(season=int(season) if season is not None else None)
 
-        # Try cache (Redis first, then SQLite)
+        # Try cache (Redis first, then SQL)
         cache_key = f"h2h:v2:{driver1_id}:{driver2_id}:{season}:{mode}"
-        if REDIS_CLIENT:
-            cached = REDIS_CLIENT.get(cache_key)
-            if cached:
-                try:
-                    return json.loads(cached)
-                except Exception:
-                    pass
-        # Try sqlite cache
-        try:
-            db = SessionLocal()
-            q = db.query(HeadToHeadCache).filter_by(driver1_id=driver1_id, driver2_id=driver2_id, season=season, mode=mode).order_by(HeadToHeadCache.created_at.desc()).first()
-            if q and q.response_json:
-                cached_payload = json.loads(q.response_json)
-                # Ignore stale cache rows produced before the newer head-to-head schema.
-                if (
-                    isinstance(cached_payload, dict)
-                    and 'driver1_stats' in cached_payload
-                    and isinstance(cached_payload['driver1_stats'], dict)
-                    and 'avg_finish' in cached_payload['driver1_stats']
-                    and 'radar_scores' in cached_payload['driver1_stats']
-                ):
-                    return cached_payload
-        except Exception:
-            pass
+        cached_payload = h2h_cache_get(cache_key, driver1_id, driver2_id, season, mode)
+        if cached_payload is not None:
+            return cached_payload
 
         # Helper to compute stats for a driver
         def compute_stats(driver_id):
@@ -1304,25 +1406,7 @@ async def api_head_to_head(driver1_id: int, driver2_id: int, season: Optional[in
             'cumulative_chart': cumulative_chart
         }
 
-        # Save to caches
-        try:
-            serialized = json.dumps(response)
-            if REDIS_CLIENT:
-                try:
-                    REDIS_CLIENT.set(cache_key, serialized, ex=60*60)
-                except Exception:
-                    pass
-            try:
-                db = SessionLocal()
-                entry = HeadToHeadCache(driver1_id=driver1_id, driver2_id=driver2_id, season=season, mode=mode, response_json=serialized)
-                db.add(entry)
-                db.commit()
-                db.close()
-            except Exception:
-                pass
-        except Exception:
-            pass
-
+        h2h_cache_put(cache_key, driver1_id, driver2_id, season, mode, response)
         return response
     except Exception as e:
         logger.exception(f"Error computing head-to-head stats: {e}")

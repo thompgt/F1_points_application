@@ -280,3 +280,110 @@ def test_health_detailed():
     assert resp.status_code == 200
     data = resp.json()
     assert 'database' in data and 'cache' in data and 'data_files' in data
+
+
+# ============================================================================
+# Head-to-head response cache
+# ============================================================================
+
+def _sample_payload(marker):
+    """A payload shaped like a real head-to-head response."""
+    return {
+        'driver1_stats': {'avg_finish': marker, 'radar_scores': {}},
+        'driver2_stats': {'avg_finish': 0, 'radar_scores': {}},
+        'race_by_race': [],
+        'cumulative_chart': None,
+    }
+
+
+def _clear_h2h_rows(key):
+    import main
+    from db import HeadToHeadCache, SessionLocal
+
+    with SessionLocal() as db:
+        db.query(HeadToHeadCache).filter_by(
+            driver1_id=key[0], driver2_id=key[1], season=key[2], mode=key[3]
+        ).delete()
+        db.commit()
+    if main.REDIS_CLIENT:
+        main.REDIS_CLIENT.delete(f"h2h:test:{key[0]}:{key[1]}")
+
+
+def test_h2h_cache_round_trips():
+    import main
+
+    key = (999001, 999002, 1999, 'season')
+    _clear_h2h_rows(key)
+    try:
+        assert main.h2h_cache_get('h2h:test:999001:999002', *key) is None
+        main.h2h_cache_put('h2h:test:999001:999002', *key, _sample_payload(1))
+        assert main.h2h_cache_get('h2h:test:999001:999002', *key)['driver1_stats']['avg_finish'] == 1
+    finally:
+        _clear_h2h_rows(key)
+
+
+def test_h2h_cache_upserts_instead_of_growing():
+    """The SQL cache used to INSERT a row per miss and read back the newest.
+
+    Re-seeding the data then meant the table grew forever while serving the
+    original answer, because nothing expired or replaced it.
+    """
+    import main
+    from db import HeadToHeadCache, SessionLocal
+
+    key = (999003, 999004, 1999, 'season')
+    _clear_h2h_rows(key)
+    try:
+        for marker in range(1, 4):
+            main.h2h_cache_put('h2h:test:999003:999004', *key, _sample_payload(marker))
+
+        with SessionLocal() as db:
+            rows = db.query(HeadToHeadCache).filter_by(
+                driver1_id=key[0], driver2_id=key[1], season=key[2], mode=key[3]
+            ).count()
+        assert rows == 1, f"three writes left {rows} rows behind"
+
+        served = main.h2h_cache_get('h2h:test:999003:999004', *key)
+        assert served['driver1_stats']['avg_finish'] == 3, "cache served a stale payload"
+    finally:
+        _clear_h2h_rows(key)
+
+
+def test_h2h_cache_expires_old_sql_rows(monkeypatch):
+    """Redis rows had a 1h TTL; SQL rows had none at all."""
+    import main
+
+    key = (999005, 999006, 1999, 'season')
+    _clear_h2h_rows(key)
+    try:
+        main.h2h_cache_put('h2h:test:999005:999006', *key, _sample_payload(1))
+        assert main.h2h_cache_get('h2h:test:999005:999006', *key) is not None
+
+        # Re-read with a TTL of zero: the row is now older than the cutoff.
+        monkeypatch.setattr(main, 'H2H_CACHE_TTL_SECONDS', 0)
+        if main.REDIS_CLIENT:
+            main.REDIS_CLIENT.delete('h2h:test:999005:999006')
+        assert main.h2h_cache_get('h2h:test:999005:999006', *key) is None
+    finally:
+        _clear_h2h_rows(key)
+
+
+def test_h2h_cache_read_survives_a_broken_backend(monkeypatch):
+    """A dead cache must degrade to a miss, not a 500 -- but must be counted."""
+    import main
+
+    class Broken:
+        def get(self, *args, **kwargs):
+            raise RuntimeError("redis is down")
+
+        def set(self, *args, **kwargs):
+            raise RuntimeError("redis is down")
+
+        def delete(self, *args, **kwargs):
+            return None
+
+    monkeypatch.setattr(main, 'REDIS_CLIENT', Broken())
+    before = main.metrics.h2h_cache_total.labels(backend='redis', outcome='error')._value.get()
+    assert main.h2h_cache_get('h2h:test:broken', 999007, 999008, 1999, 'season') is None
+    after = main.metrics.h2h_cache_total.labels(backend='redis', outcome='error')._value.get()
+    assert after == before + 1, "a broken cache went unrecorded"
