@@ -25,6 +25,7 @@ except Exception:
     FASTF1_AVAILABLE = False
 from plotly.subplots import make_subplots
 import json
+import time
 import plotly.io as pio
 from typing import List, Optional
 import warnings
@@ -159,7 +160,7 @@ def _load_from_csv():
 
 
 @lru_cache(maxsize=1)
-def load_data():
+def _load_data_cached():
     """Load all necessary F1 datasets.
 
     The database is the point of retrieval; the CSVs are only the seed data and
@@ -173,6 +174,29 @@ def load_data():
         logger.warning(f"Database load failed ({exc}); falling back to seed CSV files")
         results, races, drivers, seasons, constructors, driver_standings = _load_from_csv()
     return results, races, drivers, seasons, constructors, driver_standings
+
+
+def load_data():
+    """Cache-aware wrapper around the dataset load, for metrics.
+
+    Whether the lru_cache served a call is invisible from the outside, so read
+    it off cache_info(): a miss means the process actually re-read every table
+    (results.csv is ~26k rows, and a cold load shows up in latency). The
+    duration gauge records only misses -- a hit is a dict lookup and averaging
+    it in would hide what the cold path costs.
+    """
+    misses_before = _load_data_cached.cache_info().misses
+    started = time.perf_counter()
+    frames = _load_data_cached()
+    elapsed = time.perf_counter() - started
+    was_hit = _load_data_cached.cache_info().misses == misses_before
+    metrics.record_data_load(hit=was_hit, duration_seconds=elapsed)
+    return frames
+
+
+# Callers (and tests) that reach for load_data.cache_clear() still find it.
+load_data.cache_clear = _load_data_cached.cache_clear
+load_data.cache_info = _load_data_cached.cache_info
 
 def adjust_points(results_df, points_system):
     """Adjust the points in the results DataFrame to the specified points system"""
@@ -578,35 +602,40 @@ async def calculate_standings_api(request: StandingsRequest):
             points_system = request.points_system
         
         results, races, drivers, _, constructors, _ = load_data()
-        
-        # Adjust points
-        adjusted_results = adjust_points(results, points_system)
-        
-        # Merge with driver and race and constructor information
-        adjusted_results_with_drivers = pd.merge(
-            adjusted_results,
-            drivers[['driverId', 'surname', 'forename']],
-            on='driverId'
-        )
 
-        adjusted_results_with_constructors = pd.merge(
-            adjusted_results_with_drivers,
-            constructors[['constructorId', 'name']].rename(columns={'name': 'constructor_name'}),
-            on='constructorId'
-        )
-        
-        race_cols = ['raceId', 'year', 'name']
-        if 'round' in races.columns:
-            race_cols.append('round')
+        # Everything from the points adjustment through the standings groupby is
+        # the actual "calculate" work, timed as one unit and split by which points
+        # system was applied -- a pre-1991 array touches 6 positions, the modern
+        # one 10, and the charts downstream are excluded on purpose.
+        with metrics.observe_points_calculation(request.points_system):
+            # Adjust points
+            adjusted_results = adjust_points(results, points_system)
 
-        adjusted_results_with_races = pd.merge(
-            adjusted_results_with_constructors,
-            races[race_cols],
-            on='raceId'
-        )
-        
-        # Calculate standings
-        standings = calculate_standings(adjusted_results_with_races, request.season_year)
+            # Merge with driver and race and constructor information
+            adjusted_results_with_drivers = pd.merge(
+                adjusted_results,
+                drivers[['driverId', 'surname', 'forename']],
+                on='driverId'
+            )
+
+            adjusted_results_with_constructors = pd.merge(
+                adjusted_results_with_drivers,
+                constructors[['constructorId', 'name']].rename(columns={'name': 'constructor_name'}),
+                on='constructorId'
+            )
+
+            race_cols = ['raceId', 'year', 'name']
+            if 'round' in races.columns:
+                race_cols.append('round')
+
+            adjusted_results_with_races = pd.merge(
+                adjusted_results_with_constructors,
+                races[race_cols],
+                on='raceId'
+            )
+
+            # Calculate standings
+            standings = calculate_standings(adjusted_results_with_races, request.season_year)
 
         # Determine primary constructor per driver in the selected season (mode by count of appearances)
         season_rows = adjusted_results_with_races[adjusted_results_with_races['year'] == request.season_year]
@@ -1382,33 +1411,35 @@ async def simulate_season_endpoint(request: SimulateSeasonRequest):
         
         # Load data and calculate standings
         results, races, drivers, _, constructors, _ = load_data()
-        adjusted_results = adjust_points(results, points_system)
-        
-        # Merge with driver and race and constructor information
-        adjusted_results_with_drivers = pd.merge(
-            adjusted_results,
-            drivers[['driverId', 'surname', 'forename']],
-            on='driverId'
-        )
-        
-        adjusted_results_with_constructors = pd.merge(
-            adjusted_results_with_drivers,
-            constructors[['constructorId', 'name']].rename(columns={'name': 'constructor_name'}),
-            on='constructorId'
-        )
-        
-        race_cols = ['raceId', 'year', 'name']
-        if 'round' in races.columns:
-            race_cols.append('round')
-        
-        adjusted_results_with_races = pd.merge(
-            adjusted_results_with_constructors,
-            races[race_cols],
-            on='raceId'
-        )
-        
-        # Calculate standings
-        standings = calculate_standings(adjusted_results_with_races, request.season_year)
+
+        with metrics.observe_points_calculation(request.points_system):
+            adjusted_results = adjust_points(results, points_system)
+
+            # Merge with driver and race and constructor information
+            adjusted_results_with_drivers = pd.merge(
+                adjusted_results,
+                drivers[['driverId', 'surname', 'forename']],
+                on='driverId'
+            )
+
+            adjusted_results_with_constructors = pd.merge(
+                adjusted_results_with_drivers,
+                constructors[['constructorId', 'name']].rename(columns={'name': 'constructor_name'}),
+                on='constructorId'
+            )
+
+            race_cols = ['raceId', 'year', 'name']
+            if 'round' in races.columns:
+                race_cols.append('round')
+
+            adjusted_results_with_races = pd.merge(
+                adjusted_results_with_constructors,
+                races[race_cols],
+                on='raceId'
+            )
+
+            # Calculate standings
+            standings = calculate_standings(adjusted_results_with_races, request.season_year)
         
         # Determine primary constructor per driver
         season_rows = adjusted_results_with_races[adjusted_results_with_races['year'] == request.season_year]

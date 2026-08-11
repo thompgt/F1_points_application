@@ -121,6 +121,9 @@ rate_limit_rejections_total = Counter(
     labelnames=("limit",),  # burst | per_minute | per_hour
 )
 
+for _limit in ("burst", "per_minute", "per_hour"):
+    rate_limit_rejections_total.labels(limit=_limit)
+
 errors_total = Counter(
     "f1_errors_total",
     "Exceptions caught by ErrorHandlerMiddleware, by exception class and response status.",

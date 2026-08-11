@@ -3,6 +3,7 @@ Season Simulator - Uses RAG, Ollama, and web scraping to generate season summari
 """
 import os
 import io
+import time
 import requests
 from bs4 import BeautifulSoup
 import wikipediaapi
@@ -18,6 +19,8 @@ from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY
 import plotly.graph_objects as go
 from datetime import datetime
 import json
+
+from metrics import ollama_calls_total, ollama_request_duration_seconds
 
 # Initialize ChromaDB client
 chroma_client = chromadb.Client()
@@ -182,23 +185,40 @@ Please provide:
 
 Write in an engaging, informative style suitable for a professional report."""
 
-            response = requests.post(
-                f"{self.ollama_base_url}/api/generate",
-                json={
-                    "model": self.ollama_model,
-                    "prompt": prompt,
-                    "stream": False
-                },
-                timeout=180
-            )
-            if response.status_code != 200:
-                raise RuntimeError(f"Ollama returned status {response.status_code}: {response.text[:300]}")
+            # Timed and counted for Prometheus: a local llama3.1:8b generation is
+            # the slowest thing this app does, and it fails in three distinct ways
+            # (server down, non-200, empty completion) that the outcome label keeps
+            # apart. The model name is deliberately not a label -- it is fixed today,
+            # and making it dynamic later would be a cardinality footgun.
+            started = time.perf_counter()
+            try:
+                response = requests.post(
+                    f"{self.ollama_base_url}/api/generate",
+                    json={
+                        "model": self.ollama_model,
+                        "prompt": prompt,
+                        "stream": False
+                    },
+                    timeout=180
+                )
+                if response.status_code != 200:
+                    ollama_calls_total.labels(outcome="http_error").inc()
+                    raise RuntimeError(f"Ollama returned status {response.status_code}: {response.text[:300]}")
 
-            data = response.json()
-            text = data.get('response', '').strip()
-            if not text:
-                raise RuntimeError("Ollama returned empty response")
-            return text
+                data = response.json()
+                text = data.get('response', '').strip()
+                if not text:
+                    ollama_calls_total.labels(outcome="empty_response").inc()
+                    raise RuntimeError("Ollama returned empty response")
+                ollama_calls_total.labels(outcome="success").inc()
+                return text
+            except RuntimeError:
+                raise
+            except Exception:
+                ollama_calls_total.labels(outcome="exception").inc()
+                raise
+            finally:
+                ollama_request_duration_seconds.observe(time.perf_counter() - started)
         except Exception as e:
             print(f"Error generating summary: {e}")
             return f"Error generating AI summary. Basic info: {season_year} F1 season with {len(standings_data['standings'])} drivers."

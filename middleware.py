@@ -17,6 +17,8 @@ from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from pydantic import ValidationError
 
+from metrics import rate_limit_rejections_total, record_error
+
 # ============================================================================
 # Logging Configuration
 # ============================================================================
@@ -106,6 +108,7 @@ class ErrorHandlerMiddleware(BaseHTTPMiddleware):
         except ValidationError as e:
             # Pydantic validation errors
             logger.warning(f"Validation error: {e.errors()}", extra={'request_id': RequestContext.get_request_id()})
+            record_error(e, 422)
             return JSONResponse(
                 status_code=422,
                 content={
@@ -120,6 +123,7 @@ class ErrorHandlerMiddleware(BaseHTTPMiddleware):
         except HTTPException as e:
             # FastAPI HTTP exceptions (pass through with additional context)
             logger.warning(f"HTTP exception: {e.status_code} - {e.detail}", extra={'request_id': RequestContext.get_request_id()})
+            record_error(e, e.status_code)
             return JSONResponse(
                 status_code=e.status_code,
                 content={
@@ -134,6 +138,7 @@ class ErrorHandlerMiddleware(BaseHTTPMiddleware):
         except ValueError as e:
             # Value errors (usually from validation)
             logger.warning(f"Value error: {str(e)}", extra={'request_id': RequestContext.get_request_id()})
+            record_error(e, 400)
             return JSONResponse(
                 status_code=400,
                 content={
@@ -148,6 +153,7 @@ class ErrorHandlerMiddleware(BaseHTTPMiddleware):
         except Exception as e:
             # Unexpected errors - log full stack trace
             logger.exception(f"Unhandled exception: {str(e)}", extra={'request_id': RequestContext.get_request_id()})
+            record_error(e, 500)
             return JSONResponse(
                 status_code=500,
                 content={
@@ -265,21 +271,27 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         minute_count = len(self.minute_requests[client_id])
         hour_count = len(self.hour_requests[client_id])
         
+        # Rejections are counted by *which* limit tripped, not by client -- a
+        # per-client label would be attacker-controlled unbounded cardinality.
+
         # Check burst limit (requests in last second)
         recent = [t for t in self.minute_requests[client_id] if t > current_time - 1]
         if len(recent) >= self.burst_limit:
+            rate_limit_rejections_total.labels(limit="burst").inc()
             return False, "Burst limit exceeded", 1
-        
+
         # Check per-minute limit
         if minute_count >= self.requests_per_minute:
             oldest = min(self.minute_requests[client_id])
             retry_after = int(60 - (current_time - oldest)) + 1
+            rate_limit_rejections_total.labels(limit="per_minute").inc()
             return False, "Rate limit exceeded (per minute)", retry_after
-        
+
         # Check per-hour limit
         if hour_count >= self.requests_per_hour:
             oldest = min(self.hour_requests[client_id])
             retry_after = int(3600 - (current_time - oldest)) + 1
+            rate_limit_rejections_total.labels(limit="per_hour").inc()
             return False, "Rate limit exceeded (per hour)", retry_after
         
         return True, None, None
