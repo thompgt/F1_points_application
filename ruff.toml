@@ -21,8 +21,3 @@ ignore = [
     # would not make a Plotly layout dict easier to read.
     "E501",
 ]
-
-[lint.per-file-ignores]
-# The notebook-adjacent script is kept in sync with scoring.py by hand; see the
-# module docstring there.
-"adjusted_points.py" = ["E402"]

@@ -41,9 +41,10 @@ recalculated under the Modern system:
 
 ![Cumulative points race-by-race, 2021 season](images/cumulative_points_2021.png)
 
-*(Both charts were generated from this repo's own data — see
-[`adjusted_points.py`](adjusted_points.py) / [`adjusted_points.ipynb`](adjusted_points.ipynb)
-for the standalone recalculation logic that the live app in `main.py` mirrors.)*
+*(Both charts were generated from this repo's own data. The scoring rules behind
+them live in [`scoring.py`](scoring.py), which the API and the standalone
+[`adjusted_points.py`](adjusted_points.py) script both import — there is one
+implementation, not a copy per entry point.)*
 
 ---
 
@@ -141,8 +142,7 @@ F1_points_application/
 ├── middleware.py                # Error handling, logging, rate limiting, security headers
 ├── validators.py                # Pydantic request/response models and input limits
 ├── season_simulator.py          # Wikipedia RAG + Ollama + scraping + PDF report
-├── adjusted_points.py           # Standalone pandas recalculation script
-├── adjusted_points.ipynb        # Exploratory notebook version
+├── adjusted_points.py           # Standalone CLI: re-score a season, write adjusted_results.csv
 ├── ruff.toml                    # Lint config (F + E), enforced by CI
 ├── .github/workflows/ci.yml     # Lint + tests on every push
 ├── scripts/

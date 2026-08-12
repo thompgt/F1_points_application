@@ -1,112 +1,124 @@
-import pandas as pd
+#!/usr/bin/env python3
+"""Standalone recalculation: re-score a season and write adjusted_results.csv.
+
+This script used to be a fork. It carried its own copy of the points array and
+its own ``adjust_points`` / ``calculate_standings``, which meant it also carried
+its own copy of every scoring bug -- awarding points off ``positionOrder`` so
+retirements scored, paying both halves of a 1950s shared drive in full, and
+resolving championship ties by whatever order the groupby emitted. It imported
+seaborn and matplotlib, neither of which is in requirements.txt, so on a clean
+install it crashed on import before any of that mattered.
+
+It now imports the same :mod:`scoring` module the API uses, so there is exactly
+one implementation of the rules and this cannot drift from it again. Charts use
+plotly, which the app already depends on.
+
+Usage::
+
+    python adjusted_points.py                 # 2024 under modern points
+    python adjusted_points.py --season 1988 --system pre_1991
+    python adjusted_points.py --chart         # also write a cumulative-points HTML
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
 import warnings
-import seaborn as sns
-import matplotlib.pyplot as plt
+
+import pandas as pd
+
+import scoring
 
 warnings.filterwarnings("ignore")
 
-# Define the modern points system
-MODERN_POINTS = [25, 18, 15, 12, 10, 8, 6, 4, 2, 1]
+ROOT = os.path.dirname(os.path.abspath(__file__))
+OUTPUT_CSV = os.path.join(ROOT, "adjusted_results.csv")
 
-def adjust_points(results_df):
-    """
-    Adjust the points in the results DataFrame to the modern points system.
-    """
-    adjusted_results = results_df.copy()
-    adjusted_results['adjusted_points'] = 0
+# Kaggle's exports use a literal \N for missing values.
+NA_VALUES = ["\\N"]
 
-    for i, points in enumerate(MODERN_POINTS, start=1):
-        adjusted_results.loc[adjusted_results['positionOrder'] == i, 'adjusted_points'] = points
 
-    return adjusted_results
+def load_frames():
+    read = lambda name: pd.read_csv(os.path.join(ROOT, f"{name}.csv"), na_values=NA_VALUES)  # noqa: E731
+    return read("results"), read("races"), read("drivers")
 
-def calculate_standings(adjusted_results_with_races, season_year):
-    """
-    Calculate the standings for a given season.
-    """
-    season_results = adjusted_results_with_races[adjusted_results_with_races['year'] == season_year]
-    standings = season_results.groupby(['surname', 'forename'], as_index=False)['adjusted_points'].sum()
-    standings = standings.sort_values(by='adjusted_points', ascending=False).reset_index(drop=True)
-    standings.index += 1
-    standings.reset_index(inplace=True)
-    standings.rename(columns={'index': 'Position'}, inplace=True)
-    return standings
 
-def plot_cumulative_points(adjusted_results_with_races, season_year):
-    """
-    Plot cumulative points for the top 10 drivers over the season.
-    """
-    # Filter results for the given season
-    season_results = adjusted_results_with_races[adjusted_results_with_races['year'] == season_year]
+def build_adjusted(system_key: str) -> pd.DataFrame:
+    """Score every result and join on driver and race metadata."""
+    results, races, drivers = load_frames()
 
-    # Sort by race order to ensure cumulative points are calculated correctly
-    season_results = season_results.sort_values(by=['raceId', 'positionOrder'])
+    rules = scoring.resolve_points_system(system_key)
+    if rules is None:
+        raise SystemExit(
+            f"unknown points system {system_key!r}; choose one of: "
+            + ", ".join(scoring.NAMED_POINTS_SYSTEMS)
+        )
 
-    # Calculate cumulative points for each driver
-    season_results['cumulative_points'] = season_results.groupby(['surname', 'forename'])['adjusted_points'].cumsum()
+    adjusted = scoring.adjust_points(results, rules, races=races)
+    adjusted = pd.merge(adjusted, drivers[["driverId", "surname", "forename"]], on="driverId")
+    return pd.merge(adjusted, races[["raceId", "year", "name", "round"]], on="raceId")
 
-    # Get the top 10 drivers based on total points
-    top_10_drivers = (
-        season_results.groupby(['surname', 'forename'], as_index=False)['adjusted_points']
-        .sum()
-        .sort_values(by='adjusted_points', ascending=False)
-        .head(10)
+
+def plot_cumulative_points(adjusted_results_with_races: pd.DataFrame, season_year: int) -> str:
+    """Write an interactive cumulative-points chart for the season's top 10."""
+    import plotly.express as px
+
+    season = adjusted_results_with_races[
+        adjusted_results_with_races["year"] == season_year
+    ].sort_values(["round", "raceId"]).copy()
+    season["driver"] = season["forename"] + " " + season["surname"]
+    season["cumulative_points"] = season.groupby("driver")["adjusted_points"].cumsum()
+
+    top_10 = (
+        season.groupby("driver")["adjusted_points"].sum().sort_values(ascending=False).head(10).index
     )
-
-    # Filter the season results to include only the top 10 drivers
-    season_results_top_10 = season_results[
-        season_results['surname'].isin(top_10_drivers['surname'])
-    ]
-
-    # Plot cumulative points using Seaborn
-    plt.figure(figsize=(12, 6))
-    sns.lineplot(
-        data=season_results_top_10,
-        x='raceId',
-        y='cumulative_points',
-        hue='surname',
-        marker='o'
+    figure = px.line(
+        season[season["driver"].isin(top_10)],
+        x="round",
+        y="cumulative_points",
+        color="driver",
+        markers=True,
+        title=f"Cumulative points, {season_year}",
+        labels={"round": "Round", "cumulative_points": "Cumulative points", "driver": "Driver"},
     )
-    plt.title(f'Cumulative Points for Top 10 Drivers in {season_year} Season', fontsize=16)
-    plt.xlabel('Race ID', fontsize=12)
-    plt.ylabel('Cumulative Points', fontsize=12)
-    plt.legend(title='Driver', bbox_to_anchor=(1.05, 1), loc='upper left')
-    plt.tight_layout()
-    plt.show()
-    
-def main():
-    # Load the necessary CSV files
-    results = pd.read_csv('results.csv')
-    races = pd.read_csv('races.csv')
-    driver_info = pd.read_csv('drivers.csv')
+    path = os.path.join(ROOT, f"cumulative_points_{season_year}.html")
+    figure.write_html(path)
+    return path
 
-    # Adjust points in the results DataFrame
-    adjusted_results = adjust_points(results)
 
-    # Merge adjusted results with driver information for better readability
-    adjusted_results_with_drivers = pd.merge(
-        adjusted_results,
-        driver_info[['driverId', 'surname', 'forename']],
-        on='driverId'
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--season", type=int, default=2024, help="season to print standings for")
+    parser.add_argument(
+        "--system",
+        default="modern",
+        choices=sorted(scoring.NAMED_POINTS_SYSTEMS),
+        help="named points system to score under",
     )
+    parser.add_argument("--chart", action="store_true", help="also write a cumulative-points chart")
+    parser.add_argument("--no-write", action="store_true", help="skip writing adjusted_results.csv")
+    args = parser.parse_args()
 
-    # Merge with race information to include race details
-    adjusted_results_with_races = pd.merge(
-        adjusted_results_with_drivers,
-        races[['raceId', 'year', 'name']],
-        on='raceId'
-    )
+    adjusted = build_adjusted(args.system)
 
-    # Calculate standings for a specific season (e.g., 2009)
-    season_year = 2024
-    standings = calculate_standings(adjusted_results_with_races, season_year)
+    if not args.no_write:
+        adjusted.to_csv(OUTPUT_CSV, index=False)
+        print(f"wrote {OUTPUT_CSV} ({len(adjusted):,} rows)")
 
-    # Display the standings
-    print(f"Standings for the {season_year} season:")
-    print(standings.to_string(index=False))
+    standings = scoring.calculate_standings(adjusted, args.season)
+    if standings.empty:
+        print(f"No data for the {args.season} season.")
+        return 1
 
-    # Plot cumulative points for the season
-    plot_cumulative_points(adjusted_results_with_races, season_year)
+    label = scoring.NAMED_POINTS_SYSTEMS[args.system]["name"]
+    print(f"\n{args.season} standings under {label}:")
+    print(standings[["Position", "forename", "surname", "adjusted_points"]].to_string(index=False))
+
+    if args.chart:
+        print(f"\nwrote {plot_cumulative_points(adjusted, args.season)}")
+    return 0
+
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
