@@ -254,19 +254,25 @@ is missing or empty the loader raises, the exception is caught, a warning is
 logged, and the same six frames are read from the seed CSVs instead — the app
 always boots.
 
-**2. Re-scoring.** `adjust_points(results_df, points_system)` copies the results
-frame, zeroes an `adjusted_points` column, and assigns the *i*-th value of the
-chosen scale to every row whose `positionOrder == i`. Everything outside the
-scale scores zero. This operates on the real finishing order of every race ever
-run, so a 6-deep 1950s scale and a 10-deep modern scale produce genuinely
-different championships rather than a linear rescale.
+**2. Re-scoring.** `scoring.adjust_points(results_df, rules, races=...)` copies
+the results frame and awards the *i*-th value of the chosen scale to entrants
+**classified** in position *i*. Classification is read from `positionText`, which
+is numeric only for cars that finished — `positionOrder` is Ergast's sort key and
+every entrant has one, retirements included. On top of the positional scale it
+applies the fastest-lap point, sprint payouts, half points and shared-drive
+splitting; see [Scoring model and known limitations](#scoring-model-and-known-limitations).
+This operates on the real finishing order of every race ever run, so a 6-deep
+1950s scale and a 10-deep modern scale produce genuinely different championships
+rather than a linear rescale.
 
 **3. Enrichment.** The adjusted results are merged with `drivers` (names),
 `constructors` (team name) and `races` (`year`, race name, `round`), producing
 one tidy frame keyed by driver, constructor and race.
 
 **4. Standings.** `calculate_standings()` filters to the requested season, sums
-`adjusted_points` per driver, sorts descending and assigns 1-based positions.
+`adjusted_points` per driver, and orders them by points and then by FIA
+countback — most wins, then most second places, and so on down to P10 — so a tie
+is resolved by a rule rather than by whatever order the `groupby` emitted.
 Each driver is then attributed to their most frequent constructor that season
 (modal count of appearances), so mid-season team changes don't split a driver's
 row.
@@ -292,6 +298,63 @@ streamed back as a file download. Expect roughly 30–60 seconds.
 **8. Cross-cutting.** Every request passes through the middleware stack (error
 handling → logging → rate limiting → security headers), and per-route metrics
 are recorded for the Prometheus scrape at `/metrics`.
+
+---
+
+## Scoring model and known limitations
+
+Re-scoring a season is not just "look up the finishing position in an array".
+Formula 1's rules carry modifiers that change championship totals, and a few
+that this app deliberately does not model. Everything below is implemented in
+[`scoring.py`](scoring.py) and covered by [`tests/test_points.py`](tests/test_points.py).
+
+### What is modelled
+
+| Rule | How |
+|---|---|
+| **Only classified finishers score** | Points are awarded on `positionText`, which is numeric only for cars that were classified. `positionOrder` is Ergast's sort key and *every* entrant gets one — 338 rows in this dataset have `positionOrder ≤ 10` with a null `position` (1957 Monaco, P7 with an engine failure, among them) |
+| **Retirements, disqualifications, non-starters** | `R`, `D`, `E`, `W`, `F`, `N` in `positionText` all score zero. A disqualification does not promote the cars behind it; the published classification is scored as published |
+| **Shared drives** | In the 1950s a driver could hand his car to a team-mate and both were classified in the same position — the 1955 Argentine GP has three cars at P2 and three at P3. That position's points are split between them, as the FIA did |
+| **Fastest lap** | One point where the system defines it (2019–2024), only if the driver was classified in the top ten. Ergast records it as `rank == 1`, a column populated from 2004 onwards |
+| **Half points** | The six races stopped before 75% distance: 1975 Spain, 1975 Austria, 1984 Monaco, 1991 Australia, 2009 Malaysia, 2021 Belgium. There is no scheduled-lap-count column in the data, so this is an explicit list rather than a derived rule |
+| **Tie-breaks** | FIA countback: points, then count of wins, then seconds, then thirds, down to P10 |
+| **Sprint races** | The scoring supports them and the modern system declares the 8-7-6-5-4-3-2-1 payout — but **no sprint dataset ships with this repo** (see below) |
+
+### What is not modelled
+
+- **Sprint results are missing from the data.** `races.csv` has a `sprint_date`
+  for 18 rounds, but there is no sprint results table to score. 2021–2024 totals
+  are therefore short by the sprint points those drivers actually scored.
+  `scoring.adjust_points()` accepts a `sprint_results` frame and will score it if
+  you supply one.
+- **Dropped scores.** From 1950 to 1990 only a driver's best *n* results counted
+  towards the title, and *n* varied year to year. Every round is counted here, so
+  pre-1991 totals are the raw ones. This is why 1988 comes out Prost 105, Senna
+  94 — the correct *raw* totals — while the championship was actually Senna's
+  under best-11.
+- **2014's double-points finale.** Abu Dhabi 2014 paid double. Not applied.
+- **The 1950s fastest-lap point**, which was shared between drivers who set
+  identical times, and the Indianapolis 500 rounds counted towards the
+  championship from 1950 to 1960.
+- **Ineligible entrants.** A handful of races mixed in cars not eligible for
+  championship points — Formula 2 entries in the 1960s German GPs, most notably.
+  Seven rows across 1961–1990 disagree with the official points column for this
+  reason.
+- **Constructor championship rules**, which have their own history of counting
+  only the best-placed car per team.
+
+### How closely this tracks reality
+
+The test suite scores whole eras of `results.csv` and compares against Ergast's
+own `points` column, which is the figure the FIA awarded:
+
+| Era | Rows | Disagreements |
+|---|---|---|
+| 1991–2002 | 4,817 | **0** |
+| 2003–2009 | 2,534 | **0** |
+| 2010–2018 | 3,877 | 10 — all of them the 2014 double-points finale |
+| 2019–2024 | 2,559 | 1 — the 2024 Monaco GP has no fastest-lap data in the dataset |
+| 1961–1990 | 10,742 | 7 — ineligible F2 entries |
 
 ---
 
