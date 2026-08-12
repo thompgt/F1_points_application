@@ -1225,8 +1225,15 @@ async def api_head_to_head(driver1_id: int, driver2_id: int, season: Optional[in
                                             s2 = t2.total_seconds()
                                             gaps.append(abs(s1 - s2))
                                             qual_gap_found = True
-                        except Exception:
-                            pass
+                        except Exception as exc:
+                            # Falls through to the grid-position gap below, which
+                            # is the intended degradation -- but a fastf1 cache
+                            # miss, a network failure and a season with no
+                            # telemetry all looked identical from outside.
+                            logger.debug(
+                                "fastf1 qualifying gap unavailable for race %s: %s: %s",
+                                race_id, type(exc).__name__, exc,
+                            )
                     if not qual_gap_found:
                         if pd.notna(row.get('grid')) and pd.notna(peer.get('grid')):
                             try:
