@@ -105,6 +105,53 @@ class SeasonSimulator:
         except Exception:
             return False
     
+    # Below this, an image is a padlock, a wordmark or a flag icon rather than a
+    # photograph worth putting in a report.
+    MIN_IMAGE_WIDTH = 100
+
+    @staticmethod
+    def _usable_image_url(img) -> Optional[str]:
+        """Pick the best direct upload URL for one <img>, or None to skip it.
+
+        Selection used to be `any(dim in src for dim in ['220px', '250px', ...])`
+        -- a substring test against the URL. That is fragile in both directions:
+        MediaWiki picks thumbnail widths itself and they are not a fixed set, and
+        `src` is now a tracking redirect carrying utm parameters, so the test can
+        match text that has nothing to do with the image's size.
+
+        Read the rendered dimensions off the width/height attributes MediaWiki
+        always emits, and take the URL from `srcset`, whose highest density entry
+        is the largest thumbnail on offer and a direct upload.wikimedia.org link.
+        """
+        try:
+            width = int(img.get('width') or 0)
+        except (TypeError, ValueError):
+            width = 0
+        if width and width < SeasonSimulator.MIN_IMAGE_WIDTH:
+            return None
+
+        # srcset looks like "//upload.../330px-Foo.jpg 1.5x, //upload.../440px-Foo.jpg 2x".
+        # The last entry is the highest density, so the biggest render available.
+        candidates = []
+        for entry in (img.get('srcset') or '').split(','):
+            parts = entry.strip().split()
+            if parts and 'upload.wikimedia.org' in parts[0]:
+                candidates.append(parts[0])
+
+        src = img.get('src') or ''
+        if not candidates and 'upload.wikimedia.org' in src:
+            candidates.append(src)
+        if not candidates:
+            return None
+
+        url = candidates[-1]
+        if url.startswith('//'):
+            url = 'https:' + url
+        # Anything that is not a real photograph: interface icons ship as SVG.
+        if url.lower().endswith('.svg'):
+            return None
+        return url
+
     def scrape_season_images(self, season_year: int, max_images: int = 5) -> List[str]:
         """Scrape F1 season images from web"""
         image_urls = []
@@ -120,22 +167,17 @@ class SeasonSimulator:
             if response.status_code == 200:
                 soup = BeautifulSoup(response.content, 'html.parser')
                 
-                # Find images in the article
-                images = soup.find_all('img', limit=max_images * 2)
-                
-                for img in images:
-                    src = img.get('src')
-                    if src and ('upload.wikimedia.org' in src or src.startswith('//')):
-                        # Make sure URL is absolute
-                        if src.startswith('//'):
-                            src = 'https:' + src
-                        
-                        # Filter for reasonable size images
-                        if any(dim in src for dim in ['220px', '250px', '300px', '400px', '500px']):
-                            image_urls.append(src)
-                            if len(image_urls) >= max_images:
-                                break
-            
+                # Find images in the article. No limit here: the first handful of
+                # <img> tags on a Wikipedia page are chrome (the wordmark, the
+                # tagline, the semi-protection padlock), so capping the search
+                # before filtering can consume the whole budget on icons.
+                for img in soup.find_all('img'):
+                    url = self._usable_image_url(img)
+                    if url and url not in image_urls:
+                        image_urls.append(url)
+                        if len(image_urls) >= max_images:
+                            break
+
             return image_urls[:max_images]
         except Exception as e:
             print(f"Error scraping images: {e}")
