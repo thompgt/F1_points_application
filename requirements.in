@@ -14,7 +14,7 @@
 
 # --- Web framework ---
 fastapi>=0.141,<1
-uvicorn[standard]>=0.30,<0.39
+uvicorn[standard]>=0.52.4,<0.53
 # Listed explicitly because middleware.py imports from it directly. 1.x is the
 # floor: prometheus-fastapi-instrumentator 8.x requires starlette>=1.0, and
 # fastapi only stopped capping starlette below 1.0 at 0.141.
@@ -23,22 +23,22 @@ python-multipart>=0.0.9
 jinja2>=3.1.2
 
 # --- Validation and settings ---
-pydantic>=2.5,<3
+pydantic>=2.13.5,<3
 pydantic-settings>=2.0,<3
-python-dotenv>=1.0
+python-dotenv>=1.2.3
 
 # --- Data and charts ---
-pandas>=2.1,<3
-plotly>=5.17,<7
-kaleido>=0.2          # static image export for the PDF report
+pandas>=3.0.5,<4
+plotly>=7.0.0,<8
+kaleido>=1.4.0          # static image export for the PDF report
 Pillow>=10.0
 
 # --- Persistence ---
 SQLAlchemy>=2.0,<3
 alembic>=1.11.1
 PyMySQL>=1.1           # MySQL driver (mysql+pymysql:// URLs)
-cryptography>=42.0     # required by PyMySQL for MySQL 8 caching_sha2_password
-psycopg[binary]>=3.1
+cryptography>=50.0.1     # required by PyMySQL for MySQL 8 caching_sha2_password
+psycopg[binary]>=3.3.5
 redis>=4.5
 
 # --- Season simulator: RAG, scraping, PDF ---
@@ -46,7 +46,7 @@ chromadb>=1.0,<2       # 0.4 -> 1.0 was a breaking API change; do not widen
 beautifulsoup4>=4.12
 requests>=2.31
 wikipedia-api>=0.6
-reportlab>=4.0
+reportlab>=5.0.1
 
 # --- Observability ---
 prometheus-client>=0.21
@@ -58,4 +58,4 @@ prometheus-fastapi-instrumentator>=8.1,<9
 # --- Dev and test ---
 pytest>=7.4
 httpx>=0.24            # required by fastapi.testclient.TestClient
-ruff>=0.15             # config in ruff.toml, enforced by CI
+ruff>=0.16.5             # config in ruff.toml, enforced by CI
