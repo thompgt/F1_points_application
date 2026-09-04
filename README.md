@@ -564,6 +564,53 @@ season-report feature.
 
 ---
 
+## Deployment
+
+[`.github/workflows/cd.yml`](.github/workflows/cd.yml) deploys the
+[`Dockerfile`](Dockerfile) to [Cloud Run](https://cloud.google.com/run)
+whenever [`ci.yml`](.github/workflows/ci.yml) finishes successfully on `main`
+— never on a failing commit. The container runs with no `DATABASE_URL`, the
+same seed-CSV fallback path CI tests, so there is no Cloud SQL instance to
+provision or pay for. `--min-instances=0` scales to zero between requests
+(free at low traffic) and `--max-instances=2` caps the ceiling so a traffic
+spike can't run past the free tier unnoticed.
+
+One-time setup, before the workflow will run:
+
+1. Create (or pick) a GCP project and enable billing — required by Cloud Run
+   even though usage stays free at this app's traffic. Enable the Cloud Run
+   and Artifact Registry APIs.
+2. Create the Artifact Registry repository the workflow pushes to:
+   ```bash
+   gcloud artifacts repositories create f1-points \
+     --repository-format=docker --location=<GCP_REGION>
+   ```
+3. Create a deploy service account and key:
+   ```bash
+   gcloud iam service-accounts create f1-points-deployer
+   gcloud projects add-iam-policy-binding <GCP_PROJECT_ID> \
+     --member="serviceAccount:f1-points-deployer@<GCP_PROJECT_ID>.iam.gserviceaccount.com" \
+     --role="roles/run.admin"
+   gcloud projects add-iam-policy-binding <GCP_PROJECT_ID> \
+     --member="serviceAccount:f1-points-deployer@<GCP_PROJECT_ID>.iam.gserviceaccount.com" \
+     --role="roles/artifactregistry.writer"
+   gcloud projects add-iam-policy-binding <GCP_PROJECT_ID> \
+     --member="serviceAccount:f1-points-deployer@<GCP_PROJECT_ID>.iam.gserviceaccount.com" \
+     --role="roles/iam.serviceAccountUser"
+   gcloud iam service-accounts keys create key.json \
+     --iam-account=f1-points-deployer@<GCP_PROJECT_ID>.iam.gserviceaccount.com
+   ```
+4. In the GitHub repo settings (Settings → Secrets and variables → Actions):
+   - Secret `GCP_SA_KEY` — the full contents of `key.json`. Delete the local
+     file after pasting it in.
+   - Variable `GCP_PROJECT_ID` — the GCP project ID.
+   - Variable `GCP_REGION` — e.g. `us-central1`.
+
+After that, every push to `main` that passes CI deploys automatically; no
+further manual steps.
+
+---
+
 ## License
 
 MIT.
