@@ -1,0 +1,18 @@
+.git
+.github
+.idea
+.pytest_cache
+.ruff_cache
+__pycache__
+*.pyc
+.env
+.venv
+venv
+tests/
+notebooks/
+
+# Local dev/runtime artifacts, not needed in the image: the deployed
+# container runs with DATABASE_URL unset (the same seed-CSV fallback CI
+# tests), so these SQLite files would just be dead weight.
+cache.db
+database.db
