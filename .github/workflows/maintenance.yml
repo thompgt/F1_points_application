@@ -1,0 +1,94 @@
+name: Maintenance
+
+# Runs independently of pushes/PRs, on a schedule, so bit-rot and newly
+# disclosed CVEs in pinned dependencies get caught even on a repo nobody is
+# actively committing to. ci.yml (push/PR) proves a change didn't break
+# anything; this proves the last-known-good state hasn't quietly rotted.
+on:
+  schedule:
+    # Monday 06:00 UTC. Weekly, not daily -- pip-audit's advisory feed and
+    # dependabot's own weekly cadence don't move fast enough to justify more.
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: maintenance
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    name: Dependency vulnerability audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Audit installed packages against known CVEs
+        # Scans the resolved environment, not just requirements.txt text, so it
+        # catches vulnerabilities in transitive pins too. Non-zero exit fails
+        # the job -- that's the point, this should be loud.
+        run: |
+          pip install pip-audit
+          pip-audit --strict
+
+  suite-on-schedule:
+    name: Full suite (no push required)
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: ""
+      ENABLE_RATE_LIMITING: "false"
+      ENABLE_FASTF1_QUALI_GAP: "false"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Confirm seed data is present and intact
+        run: python scripts/fetch_data.py --check
+
+      - name: Lint
+        run: ruff check .
+
+      - name: Test
+        run: pytest tests/ -q --durations=10
+
+  stale-pr-sweep:
+    name: Flag stale dependabot PRs
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      issues: write
+    steps:
+      - uses: actions/stale@v9
+        with:
+          # Only touches dependabot's own PRs -- human PRs are never auto-closed
+          # or auto-labeled here. Bumps that sit unmerged just accumulate merge
+          # conflicts against the next bump; a nudge keeps the queue usable.
+          only-labels: "dependencies"
+          days-before-stale: 21
+          days-before-close: -1
+          stale-pr-label: "stale"
+          stale-pr-message: >
+            This dependency update has been open for three weeks with no
+            action. It may now conflict with newer dependabot PRs -- please
+            merge or close it.
+          exempt-draft-pr: true
