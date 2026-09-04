@@ -1,0 +1,23 @@
+version: 2
+updates:
+  # requirements.txt is a pip-compile lock (see the header comment in that
+  # file for why versions are pinned exactly). Dependabot edits requirements.in
+  # and requirements.txt together via its native pip-compile support, so the
+  # lock stays consistent instead of drifting out from under requirements.in.
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      python-dependencies:
+        patterns:
+          - "*"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      github-actions:
+        patterns:
+          - "*"
