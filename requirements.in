@@ -55,7 +55,11 @@ prometheus-client>=0.21
 # "'_IncludedRouter' object has no attribute 'path'".
 prometheus-fastapi-instrumentator>=8.1,<9
 
+# --- MCP (Model Context Protocol) ---
+mcp>=1.2.0,<2
+
 # --- Dev and test ---
 pytest>=7.4
 httpx>=0.24            # required by fastapi.testclient.TestClient
 ruff>=0.15             # config in ruff.toml, enforced by CI
+

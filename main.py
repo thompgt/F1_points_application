@@ -1578,6 +1578,15 @@ async def simulate_season_endpoint(request: SimulateSeasonRequest):
         logger.exception(f"Error simulating season: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
+# Mount FastMCP Server (SSE transport for Cloud Run & remote AI assistants)
+try:
+    from mcp_server import mcp as f1_mcp
+    app.mount("/mcp", f1_mcp.sse_app())
+    logger.info("FastMCP SSE server mounted at /mcp (SSE: /mcp/sse, messages: /mcp/messages)")
+except Exception as mcp_err:
+    logger.warning(f"Could not mount FastMCP SSE app: {mcp_err}")
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
+

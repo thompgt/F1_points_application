@@ -61,6 +61,9 @@ implementation, not a copy per entry point.)*
 - **Custom ASGI middleware stack** (`middleware.py`): error handling, structured
   request logging, an in-memory per-client rate limiter (per-second burst,
   per-minute and per-hour buckets) and security headers.
+- **FastMCP server** (`mcp_server.py`): Model Context Protocol server exposing
+  F1 championship calculations, race classifications, and head-to-head metrics
+  to LLM assistants via stdio and SSE transport mounted under `/mcp`.
 
 **Data engineering**
 - **pandas** transformation pipeline: multi-frame merges (results × drivers ×
@@ -141,6 +144,7 @@ F1_points_application/
 ├── metrics.py                   # Prometheus metric definitions + health collector
 ├── middleware.py                # Error handling, logging, rate limiting, security headers
 ├── validators.py                # Pydantic request/response models and input limits
+├── mcp_server.py                # FastMCP server: tools, resources, prompts for AI assistants
 ├── season_simulator.py          # Wikipedia RAG + Ollama + scraping + PDF report
 ├── adjusted_points.py           # Standalone CLI: re-score a season, write adjusted_results.csv
 ├── ruff.toml                    # Lint config (F + E), enforced by CI
@@ -496,6 +500,8 @@ no `.env` and no database to catch import-time configuration breakage.
 | `GET` | `/health`, `/ready`, `/live`, `/health/detailed` | Health and readiness probes |
 | `GET` | `/metrics` | Prometheus exposition |
 | `GET` | `/api/docs`, `/api/redoc`, `/api/openapi.json` | API documentation |
+| `GET` / `POST` | `/mcp/sse`, `/mcp/messages/` | FastMCP Server-Sent Events (SSE) endpoints |
+
 
 ```python
 import requests
@@ -511,6 +517,44 @@ requests.post("http://localhost:8000/api/calculate-standings",
 requests.post("http://localhost:8000/api/calculate-standings",
               json={"season_year": 2023, "points_system": [10, 8, 6, 4, 3, 2, 1]})
 ```
+
+### Model Context Protocol (FastMCP) integration
+
+The application includes a [FastMCP](https://github.com/jlowin/fastmcp) server (`mcp_server.py`) that surfaces the championship calculation engine to AI agents (Claude Desktop, Cursor, Antigravity, ChatGPT, etc.).
+
+#### Available Tools
+
+| Tool | Arguments | Description |
+|---|---|---|
+| `calculate_championship_standings` | `season_year: int`, `points_system: list[int] \| None`, `top_n: int` | Recalculate any F1 season (1950–present) with custom points and FIA countback tie-breaking. |
+| `get_driver_head_to_head` | `driver1: str`, `driver2: str`, `season: int \| None` | Compare two drivers head-to-head (wins, podiums, poles, avg finish, races finished ahead, qualy head-to-head). Accepts surnames, full names, or driver IDs. |
+| `get_race_results` | `season_year: int`, `round_or_name: int \| str` | Classified results, retirements, points, and lap times for any Grand Prix. |
+| `list_points_systems` | None | Lists historical F1 scoring systems and era regulations. |
+| `get_season_races` | `season_year: int` | Race calendar and round schedule for a season. |
+
+#### Resources & Prompts
+
+- **Resources**: `f1://seasons` (catalog of available seasons), `f1://points-systems` (JSON of historical points eras).
+- **Prompts**: `compare_championship_eras(season, alternate_system_name)` (structured prompt for LLM historical analysis).
+
+#### Connecting an AI assistant
+
+**Local stdio** (e.g., Claude Desktop, Cursor, Antigravity):
+```json
+{
+  "mcpServers": {
+    "f1-points": {
+      "command": "python",
+      "args": ["-m", "mcp_server"],
+      "cwd": "/path/to/F1_points_application"
+    }
+  }
+}
+```
+
+**Remote SSE** (deployed on Cloud Run):
+- **SSE URL**: `https://<service-url>/mcp/sse`
+- **Messages URL**: `https://<service-url>/mcp/messages/`
 
 ### Configuration
 
