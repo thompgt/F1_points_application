@@ -121,6 +121,7 @@ flowchart LR
     A[F1 seed CSVs<br/>results, races, drivers,<br/>seasons, constructors,<br/>driver_standings]
     A -- scripts/seed_bigquery.py --> BQ[(Google Cloud BigQuery<br/>f1_points dataset)]
     A -- scripts/seed_mysql.py --> B[(MySQL 8.4<br/>Docker + named volume)]
+    A -- scripts/sync_gcs.py --> GCS[(Cloud Storage GCS<br/>reports & datasets)]
     BQ -. BigQuery loader .-> C[load_data<br/>lru_cache]
     B -- SQLAlchemy / read_sql_table --> C
     A -. CSV fallback if DB/BQ unavailable .-> C
@@ -132,6 +133,7 @@ flowchart LR
     G --> I[Ollama / Vertex AI<br/>LLM generation]
     H --> I
     I --> J[ReportLab PDF<br/>exports/]
+    J -- upload & cache --> GCS
     E --> K[/health /ready /live<br/>/metrics/]
     E --> L[FastMCP SSE<br/>/mcp/sse]
 ```
@@ -140,9 +142,10 @@ flowchart LR
 
 ```
 F1_points_application/
-├── main.py                      # FastAPI app: routes and Plotly charts
+├── main.py                      # FastAPI app: routes, Plotly charts, and report endpoints
 ├── scoring.py                   # Points rules, named systems, countback standings
 ├── db.py                        # SQLAlchemy engine/session + cache & race ORM models
+├── gcs_storage.py               # Google Cloud Storage client: signed URLs, caching & persistence
 ├── health.py                    # /health, /ready, /live, /health/detailed probes
 ├── metrics.py                   # Prometheus metric definitions + health collector
 ├── middleware.py                # Error handling, logging, rate limiting, security headers
@@ -156,9 +159,10 @@ F1_points_application/
 │   ├── fetch_data.py            # Verify / fetch / regenerate the datasets
 │   ├── seed_mysql.py            # CSV -> MySQL seeder (idempotent)
 │   ├── seed_bigquery.py         # CSV -> Google Cloud BigQuery ETL seeder (clustered)
+│   ├── sync_gcs.py              # Cloud Storage synchronization & inspection utility
 │   └── migrate_sqlite_to_postgres.py
 ├── templates/                   # index.html, head_to_head.html, race_detail.html
-├── tests/                       # pytest suite (test_points, test_api, test_scraping)
+├── tests/                       # pytest suite (test_points, test_api, test_mcp, test_gcs)
 ├── images/                      # Charts used in this README
 ├── docker-compose.yml           # MySQL 8.4
 ├── docker-compose.ollama.yml    # Ollama LLM server
@@ -586,13 +590,35 @@ When `BIGQUERY_DATASET` is set in the environment, `load_data()` queries BigQuer
 2. **Relational Database** (MySQL or PostgreSQL via `DATABASE_URL`)
 3. **Seed CSV files** (local files in repository)
 
+#### Google Cloud Storage (GCS) Integration
+
+In cloud environments such as Cloud Run, container filesystems are ephemeral (in-memory tmpfs) and vanish when instances scale to zero. To ensure generated PDF season reports are permanently retained and fast to download, the application integrates directly with Google Cloud Storage:
+
+- **Automatic Upload & Caching**: When `POST /api/simulate-season` runs, pre-existing reports in GCS (`gs://<bucket>/season_reports/F1_Season_<year>_<system>.pdf`) are returned instantly without expensive LLM re-generation (bypassable with `"force_regenerate": true`). Newly generated PDFs are uploaded to GCS asynchronously.
+- **Time-Limited Signed URLs**: `GET /api/reports/{filename}/url` issues v4 Signed URLs allowing direct, secure browser downloads from Google Cloud Storage without proxying megabytes through the web container.
+- **Report Inventory & FastMCP**: `GET /api/reports` and MCP tools `list_available_season_reports` / `get_season_report_url` allow users and AI assistants to discover and download stored reports.
+- **CLI Sync Utility**:
+  ```bash
+  # Check bucket accessibility
+  python scripts/sync_gcs.py --check-bucket
+
+  # Sync all locally generated reports to GCS
+  python scripts/sync_gcs.py --upload-reports
+
+  # Backup raw F1 datasets to gs://<bucket>/datasets/
+  python scripts/sync_gcs.py --upload-datasets
+
+  # List remote stored reports
+  python scripts/sync_gcs.py --list-reports
+  ```
+
 #### Taking Full Advantage of Google Cloud Platform (GCP)
 
 1. **Vertex AI (Gemini 2.0 Flash) for Season Simulation**:
    - Replaces the local Ollama `llama3.1:8b` dependency with Google's Gemini Flash.
    - Reduces summary generation latency from ~45 seconds to ~1.5 seconds with serverless pay-per-token pricing, removing the need for costly GPU VMs ($200+/month).
-2. **Cloud Storage (GCS) for PDF & Telemetry Storage**:
-   - Container filesystems in Cloud Run are ephemeral (in-memory RAM). Generated PDF reports in `exports/` can be written to `gs://<project>-f1-reports/` and served via signed URLs.
+2. **Cloud Storage (GCS) for PDF & Telemetry Storage** *(Implemented)*:
+   - Persistent bucket archiving, report caching, and time-limited Signed URLs via `gcs_storage.py`.
 3. **Looker Studio BI Dashboards**:
    - Native zero-code connectivity to BigQuery tables (`f1_points.results`, `f1_points.races`) allows building live interactive championship and telemetry dashboards.
 4. **BigQuery ML**:
@@ -612,6 +638,10 @@ to `.env` and adjust.
 | `APP_VERSION` | `1.0.0` | Version reported by the health endpoints |
 | `DATABASE_URL` | `sqlite:///cache.db` | Connection string. `.env.example` sets a `mysql+pymysql://` URL with a placeholder password; SQLite and Postgres/Supabase URLs also work |
 | `CACHE_DB_URL` | — | Fallback used if `DATABASE_URL` is unset |
+| `GCP_PROJECT_ID` | — | Google Cloud project ID for BigQuery & GCS integration |
+| `BIGQUERY_DATASET` | — | BigQuery analytical dataset (e.g. `f1_points`) |
+| `GCS_BUCKET_NAME` | — | GCS bucket name for archiving simulation reports and signed URLs |
+| `GCS_SIGNED_URL_EXPIRATION_MINUTES` | `60` | Duration in minutes before generated GCS signed URLs expire |
 | `MYSQL_DATABASE` / `MYSQL_USER` / `MYSQL_PASSWORD` | *(no default)* | Credentials `docker-compose.yml` creates the database with — compose refuses to start until they are set; keep in sync with `DATABASE_URL` |
 | `MYSQL_ROOT_PASSWORD` | *(no default)* | MySQL root password inside the container |
 | `MYSQL_PORT` | `3306` | Host port the MySQL container publishes |

@@ -101,6 +101,11 @@ class SimulateSeasonRequest(BaseModel):
         max_length=MAX_CUSTOM_POINTS_LENGTH,
         description="Custom points system array"
     )
+    force_regenerate: Optional[bool] = Field(
+        default=False,
+        description="Whether to bypass GCS/local cache and force re-simulation"
+    )
+
 
 
 class RaceResultsRequest(BaseModel):

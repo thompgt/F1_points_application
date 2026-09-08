@@ -60,6 +60,7 @@ mcp>=1.2.0,<2
 
 # --- Google Cloud Platform ---
 google-cloud-bigquery>=3.20,<4
+google-cloud-storage>=2.14,<3
 db-dtypes>=1.2,<2
 
 # --- Dev and test ---

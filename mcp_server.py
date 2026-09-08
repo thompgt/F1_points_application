@@ -9,6 +9,7 @@ and analyze driver head-to-head records.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 import pandas as pd
 
@@ -23,6 +24,7 @@ mcp = FastMCP(
     ),
 )
 
+import gcs_storage
 import scoring
 from main import (
     build_enriched_results,
@@ -409,6 +411,85 @@ def get_season_races(season_year: int) -> List[Dict[str, Any]]:
     return calendar
 
 
+@mcp.tool()
+def get_season_report_url(
+    season: int,
+    points_system_name: str = "Modern",
+) -> Dict[str, Any]:
+    """Retrieve or generate a download URL for a pre-generated F1 season simulation report.
+
+    If Google Cloud Storage (GCS) is enabled, returns a time-limited Signed URL.
+    Otherwise, returns local availability and file details.
+
+    Args:
+        season: Championship year (e.g. 2021, 2012, 1994).
+        points_system_name: Name of the points scoring system (e.g. 'Modern', '1991-2002', '1981-1990').
+    """
+    blob_name = gcs_storage.get_report_blob_name(season, points_system_name)
+    filename = Path(blob_name).name
+
+    if gcs_storage.is_gcs_enabled():
+        exists = gcs_storage.report_exists(blob_name)
+        if not exists:
+            return {
+                "available": False,
+                "season": season,
+                "points_system": points_system_name,
+                "filename": filename,
+                "message": f"Report '{filename}' has not been generated or cached yet. Run season simulation via API first.",
+            }
+        signed_url = gcs_storage.generate_report_signed_url(blob_name)
+        return {
+            "available": True,
+            "season": season,
+            "points_system": points_system_name,
+            "filename": filename,
+            "download_url": signed_url,
+            "storage_type": "gcs",
+            "expires_in_minutes": gcs_storage.get_signed_url_expiration_minutes(),
+        }
+
+    # Fallback to local exports
+    local_path = Path("exports") / filename
+    if local_path.exists():
+        return {
+            "available": True,
+            "season": season,
+            "points_system": points_system_name,
+            "filename": filename,
+            "local_path": str(local_path),
+            "storage_type": "local",
+            "size_bytes": local_path.stat().st_size,
+        }
+
+    return {
+        "available": False,
+        "season": season,
+        "points_system": points_system_name,
+        "filename": filename,
+        "message": f"Report '{filename}' not found in local exports or GCS. Run season simulation to generate.",
+    }
+
+
+@mcp.tool()
+def list_available_season_reports() -> List[Dict[str, Any]]:
+    """List all available pre-generated championship simulation PDF reports (GCS or local)."""
+    if gcs_storage.is_gcs_enabled():
+        return gcs_storage.list_stored_reports()
+
+    reports = []
+    exports_dir = Path("exports")
+    if exports_dir.exists():
+        for p in exports_dir.glob("*.pdf"):
+            reports.append({
+                "filename": p.name,
+                "blob_name": f"season_reports/{p.name}",
+                "size_bytes": p.stat().st_size,
+                "storage_type": "local",
+            })
+    return reports
+
+
 # ---------------------------------------------------------------------------
 # MCP Resources
 # ---------------------------------------------------------------------------
@@ -430,6 +511,18 @@ def list_available_seasons() -> str:
 def resource_points_systems() -> str:
     """List historical scoring systems as a JSON resource."""
     return json.dumps(list_points_systems(), indent=2)
+
+
+@mcp.resource("f1://reports")
+def resource_season_reports() -> str:
+    """List all available season simulation PDF reports as a JSON resource."""
+    reports = list_available_season_reports()
+    storage_type = "gcs" if gcs_storage.is_gcs_enabled() else "local"
+    return json.dumps({
+        "storage_type": storage_type,
+        "total_reports": len(reports),
+        "reports": reports,
+    }, indent=2)
 
 
 # ---------------------------------------------------------------------------

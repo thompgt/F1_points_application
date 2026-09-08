@@ -24,6 +24,7 @@ import json
 import time
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
+from pathlib import Path
 import warnings
 from functools import lru_cache
 from season_simulator import simulate_season
@@ -40,8 +41,10 @@ from health import router as health_router
 from prometheus_fastapi_instrumentator import Instrumentator
 import metrics
 import scoring
+import gcs_storage
 
 # Optional Redis
+
 try:
     import redis
     REDIS_AVAILABLE = True
@@ -1580,7 +1583,29 @@ async def simulate_season_endpoint(request: SimulateSeasonRequest):
             'distribution_chart': distribution_chart,
             'constructors_chart': constructors_chart
         }
-        
+
+        # Check if report is already cached in GCS or locally
+        blob_name = gcs_storage.get_report_blob_name(request.season_year, points_system_name)
+        local_filename = os.path.basename(blob_name)
+        cached_local_path = os.path.join("exports", local_filename)
+
+        if not getattr(request, "force_regenerate", False):
+            if os.path.exists(cached_local_path):
+                logger.info(f"Serving locally cached report: {cached_local_path}")
+                return FileResponse(
+                    cached_local_path,
+                    media_type='application/pdf',
+                    filename=local_filename
+                )
+            elif gcs_storage.is_gcs_enabled() and gcs_storage.report_exists(blob_name):
+                logger.info(f"Serving GCS-cached report: {blob_name}")
+                if gcs_storage.download_report(blob_name, cached_local_path):
+                    return FileResponse(
+                        cached_local_path,
+                        media_type='application/pdf',
+                        filename=local_filename
+                    )
+
         # Generate PDF using the simulator
         pdf_path = simulate_season(
             season_year=request.season_year,
@@ -1591,24 +1616,74 @@ async def simulate_season_endpoint(request: SimulateSeasonRequest):
             ollama_model=ollama_model,
             output_dir="exports"
         )
-        
+
         if pdf_path and os.path.exists(pdf_path):
-            # Return the PDF file
+            # Upload to GCS if enabled
+            if gcs_storage.is_gcs_enabled():
+                gcs_storage.upload_report(pdf_path, destination_blob_name=blob_name)
+
             return FileResponse(
                 pdf_path, 
-                media_type='application/pdf',
+                media_type='application/pdf', 
                 filename=os.path.basename(pdf_path)
             )
         else:
             raise HTTPException(status_code=500, detail="Failed to generate PDF report")
-            
+
     except HTTPException:
         raise
     except Exception as e:
         logger.exception(f"Error simulating season: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
+
+@app.get("/api/reports")
+async def list_reports_api():
+    """List available pre-generated simulation reports in GCS or local exports."""
+    try:
+        if gcs_storage.is_gcs_enabled():
+            reports = gcs_storage.list_stored_reports()
+            return {"reports": reports, "source": "gcs"}
+
+        exports_dir = Path("exports")
+        reports = []
+        if exports_dir.exists():
+            for p in exports_dir.glob("*.pdf"):
+                reports.append({
+                    "filename": p.name,
+                    "blob_name": f"season_reports/{p.name}",
+                    "size_bytes": p.stat().st_size,
+                    "source": "local",
+                })
+        return {"reports": reports, "source": "local"}
+    except Exception as e:
+        logger.exception(f"Error listing reports: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.get("/api/reports/{filename}/url")
+async def get_report_url_api(filename: str):
+    """Generate a time-limited Signed URL for downloading a report from GCS."""
+    if not gcs_storage.is_gcs_enabled():
+        raise HTTPException(status_code=503, detail="GCS storage is not enabled.")
+
+    blob_name = f"season_reports/{filename}"
+    if not gcs_storage.report_exists(blob_name):
+        raise HTTPException(status_code=404, detail=f"Report '{filename}' not found in GCS.")
+
+    signed_url = gcs_storage.generate_report_signed_url(blob_name)
+    if not signed_url:
+        raise HTTPException(status_code=500, detail="Failed to generate signed URL.")
+
+    return {
+        "filename": filename,
+        "download_url": signed_url,
+        "expires_in_minutes": gcs_storage.get_signed_url_expiration_minutes()
+    }
+
+
 # Mount FastMCP Server (SSE transport for Cloud Run & remote AI assistants)
+
 try:
     from mcp_server import mcp as f1_mcp
     app.mount("/mcp", f1_mcp.sse_app())

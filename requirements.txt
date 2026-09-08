@@ -102,19 +102,29 @@ google-api-core[grpc]==2.36.0
     # via
     #   google-cloud-bigquery
     #   google-cloud-core
+    #   google-cloud-storage
 google-auth[pyopenssl]==2.57.1
     # via
     #   google-api-core
     #   google-cloud-bigquery
     #   google-cloud-core
+    #   google-cloud-storage
 google-cloud-bigquery==3.45.0
     # via -r requirements.in
 google-cloud-core==2.7.0
-    # via google-cloud-bigquery
+    # via
+    #   google-cloud-bigquery
+    #   google-cloud-storage
+google-cloud-storage==2.19.0
+    # via -r requirements.in
 google-crc32c==1.8.0
-    # via google-resumable-media
+    # via
+    #   google-cloud-storage
+    #   google-resumable-media
 google-resumable-media==2.10.2
-    # via google-cloud-bigquery
+    # via
+    #   google-cloud-bigquery
+    #   google-cloud-storage
 googleapis-common-protos==1.75.1
     # via
     #   google-api-core
@@ -357,6 +367,7 @@ requests==2.34.2
     #   -r requirements.in
     #   google-api-core
     #   google-cloud-bigquery
+    #   google-cloud-storage
     #   kubernetes
     #   requests-oauthlib
 requests-oauthlib==2.0.0
