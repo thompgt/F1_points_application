@@ -80,7 +80,10 @@ colorama==0.4.6
 cryptography==50.0.0
     # via
     #   -r requirements.in
+    #   google-auth
     #   pyjwt
+db-dtypes==1.7.1
+    # via -r requirements.in
 durationpy==0.10
     # via kubernetes
 fastapi==0.141.1
@@ -95,14 +98,38 @@ frozenlist==1.8.0
     #   aiosignal
 fsspec==2026.7.0
     # via huggingface-hub
+google-api-core[grpc]==2.36.0
+    # via
+    #   google-cloud-bigquery
+    #   google-cloud-core
+google-auth[pyopenssl]==2.57.1
+    # via
+    #   google-api-core
+    #   google-cloud-bigquery
+    #   google-cloud-core
+google-cloud-bigquery==3.45.0
+    # via -r requirements.in
+google-cloud-core==2.7.0
+    # via google-cloud-bigquery
+google-crc32c==1.8.0
+    # via google-resumable-media
+google-resumable-media==2.10.2
+    # via google-cloud-bigquery
 googleapis-common-protos==1.75.1
-    # via opentelemetry-exporter-otlp-proto-grpc
+    # via
+    #   google-api-core
+    #   grpcio-status
+    #   opentelemetry-exporter-otlp-proto-grpc
 greenlet==3.5.5
     # via sqlalchemy
 grpcio==1.83.0
     # via
     #   chromadb
+    #   google-api-core
+    #   grpcio-status
     #   opentelemetry-exporter-otlp-proto-grpc
+grpcio-status==1.83.0
+    # via google-api-core
 h11==0.16.0
     # via
     #   httpcore
@@ -173,6 +200,7 @@ narwhals==2.24.0
 numpy==2.5.2
     # via
     #   chromadb
+    #   db-dtypes
     #   onnxruntime
     #   pandas
 oauthlib==3.3.1
@@ -182,6 +210,7 @@ onnxruntime==1.28.0
 opentelemetry-api==1.44.0
     # via
     #   chromadb
+    #   google-api-core
     #   opentelemetry-exporter-otlp-proto-grpc
     #   opentelemetry-sdk
     #   opentelemetry-semantic-conventions
@@ -208,13 +237,17 @@ overrides==7.7.0
 packaging==26.3
     # via
     #   build
+    #   db-dtypes
+    #   google-cloud-bigquery
     #   huggingface-hub
     #   kaleido
     #   onnxruntime
     #   plotly
     #   pytest
 pandas==2.3.3
-    # via -r requirements.in
+    # via
+    #   -r requirements.in
+    #   db-dtypes
 pillow==12.3.0
     # via
     #   -r requirements.in
@@ -235,15 +268,26 @@ propcache==0.5.2
     # via
     #   aiohttp
     #   yarl
+proto-plus==1.28.4
+    # via google-api-core
 protobuf==7.35.1
     # via
+    #   google-api-core
     #   googleapis-common-protos
+    #   grpcio-status
     #   onnxruntime
     #   opentelemetry-proto
+    #   proto-plus
 psycopg[binary]==3.3.4
     # via -r requirements.in
 psycopg-binary==3.3.4
     # via psycopg
+pyarrow==25.0.1
+    # via db-dtypes
+pyasn1==0.6.4
+    # via pyasn1-modules
+pyasn1-modules==0.4.2
+    # via google-auth
 pybase64==1.5.0
     # via chromadb
 pycparser==3.0
@@ -278,6 +322,7 @@ pytest==9.1.1
     # via -r requirements.in
 python-dateutil==2.9.0.post0
     # via
+    #   google-cloud-bigquery
     #   kubernetes
     #   pandas
 python-dotenv==1.2.2
@@ -310,6 +355,8 @@ reportlab==5.0.0
 requests==2.34.2
     # via
     #   -r requirements.in
+    #   google-api-core
+    #   google-cloud-bigquery
     #   kubernetes
     #   requests-oauthlib
 requests-oauthlib==2.0.0

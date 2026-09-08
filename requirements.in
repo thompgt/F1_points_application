@@ -58,8 +58,13 @@ prometheus-fastapi-instrumentator>=8.1,<9
 # --- MCP (Model Context Protocol) ---
 mcp>=1.2.0,<2
 
+# --- Google Cloud Platform ---
+google-cloud-bigquery>=3.20,<4
+db-dtypes>=1.2,<2
+
 # --- Dev and test ---
 pytest>=7.4
 httpx>=0.24            # required by fastapi.testclient.TestClient
 ruff>=0.15             # config in ruff.toml, enforced by CI
+
 

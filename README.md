@@ -119,18 +119,21 @@ implementation, not a copy per entry point.)*
 ```mermaid
 flowchart LR
     A[F1 seed CSVs<br/>results, races, drivers,<br/>seasons, constructors,<br/>driver_standings]
+    A -- scripts/seed_bigquery.py --> BQ[(Google Cloud BigQuery<br/>f1_points dataset)]
     A -- scripts/seed_mysql.py --> B[(MySQL 8.4<br/>Docker + named volume)]
-    B -- SQLAlchemy / read_sql_table --> C[load_data<br/>lru_cache]
-    A -. CSV fallback if DB unavailable .-> C
+    BQ -. BigQuery loader .-> C[load_data<br/>lru_cache]
+    B -- SQLAlchemy / read_sql_table --> C
+    A -. CSV fallback if DB/BQ unavailable .-> C
     C --> D[adjust_points +<br/>calculate_standings<br/>pandas]
     D --> E[FastAPI app<br/>main.py]
     E --> F[Jinja2 + Plotly.js UI<br/>templates/]
     E --> G[season_simulator.py]
     G --> H[Wikipedia -> ChromaDB<br/>RAG retrieval]
-    G --> I[Ollama<br/>llama3.1:8b]
+    G --> I[Ollama / Vertex AI<br/>LLM generation]
     H --> I
     I --> J[ReportLab PDF<br/>exports/]
     E --> K[/health /ready /live<br/>/metrics/]
+    E --> L[FastMCP SSE<br/>/mcp/sse]
 ```
 
 ### Component layout
@@ -152,6 +155,7 @@ F1_points_application/
 ├── scripts/
 │   ├── fetch_data.py            # Verify / fetch / regenerate the datasets
 │   ├── seed_mysql.py            # CSV -> MySQL seeder (idempotent)
+│   ├── seed_bigquery.py         # CSV -> Google Cloud BigQuery ETL seeder (clustered)
 │   └── migrate_sqlite_to_postgres.py
 ├── templates/                   # index.html, head_to_head.html, race_detail.html
 ├── tests/                       # pytest suite (test_points, test_api, test_scraping)
@@ -555,6 +559,46 @@ The application includes a [FastMCP](https://github.com/jlowin/fastmcp) server (
 **Remote SSE** (deployed on Cloud Run):
 - **SSE URL**: `https://<service-url>/mcp/sse`
 - **Messages URL**: `https://<service-url>/mcp/messages/`
+
+### Google Cloud BigQuery & GCP Architecture
+
+The repository supports **Google Cloud BigQuery** as a serverless analytical data warehouse for historical F1 data.
+
+#### Seeding BigQuery
+
+`scripts/seed_bigquery.py` creates the BigQuery dataset (`f1_points`), builds strongly-typed tables with clustering (`raceId`, `driverId`, `constructorId`), and loads the datasets:
+
+```bash
+# Validate schemas and row counts locally without cloud credentials
+python scripts/seed_bigquery.py --dry-run
+
+# Seed into BigQuery using Application Default Credentials (ADC) or GCP_PROJECT_ID
+python scripts/seed_bigquery.py --project my-gcp-project-id --dataset f1_points
+
+# Overwrite / truncate existing tables
+python scripts/seed_bigquery.py --force
+```
+
+#### Application Fallback Sequence
+
+When `BIGQUERY_DATASET` is set in the environment, `load_data()` queries BigQuery directly. If BigQuery is unconfigured or unreachable, it falls back gracefully:
+1. **Google Cloud BigQuery** (if `BIGQUERY_DATASET` is configured)
+2. **Relational Database** (MySQL or PostgreSQL via `DATABASE_URL`)
+3. **Seed CSV files** (local files in repository)
+
+#### Taking Full Advantage of Google Cloud Platform (GCP)
+
+1. **Vertex AI (Gemini 2.0 Flash) for Season Simulation**:
+   - Replaces the local Ollama `llama3.1:8b` dependency with Google's Gemini Flash.
+   - Reduces summary generation latency from ~45 seconds to ~1.5 seconds with serverless pay-per-token pricing, removing the need for costly GPU VMs ($200+/month).
+2. **Cloud Storage (GCS) for PDF & Telemetry Storage**:
+   - Container filesystems in Cloud Run are ephemeral (in-memory RAM). Generated PDF reports in `exports/` can be written to `gs://<project>-f1-reports/` and served via signed URLs.
+3. **Looker Studio BI Dashboards**:
+   - Native zero-code connectivity to BigQuery tables (`f1_points.results`, `f1_points.races`) allows building live interactive championship and telemetry dashboards.
+4. **BigQuery ML**:
+   - Train machine learning models directly inside BigQuery using SQL (e.g., logistic regression or boosted trees predicting race winners based on qualifying grid, constructor, and circuit).
+5. **Cloud Memorystore for Redis**:
+   - Connects to the application's existing Redis cache via Serverless VPC Access for high-speed head-to-head calculations across autoscaled Cloud Run instances.
 
 ### Configuration
 

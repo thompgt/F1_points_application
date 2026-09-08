@@ -140,6 +140,25 @@ FIXED_OLLAMA_MODEL = "llama3.1:8b"
 DATA_TABLES = ('results', 'races', 'drivers', 'seasons', 'constructors', 'driver_standings')
 
 
+def _load_from_bigquery(dataset_name: str, project_id: Optional[str] = None):
+    """Read the F1 datasets out of Google Cloud BigQuery.
+
+    Raises if the client fails or any table is empty so the caller can fall back.
+    """
+    from google.cloud import bigquery
+    client = bigquery.Client(project=project_id)
+    frames = []
+    prefix = f"`{project_id}.{dataset_name}`" if project_id else f"`{dataset_name}`"
+    for table in DATA_TABLES:
+        query = f"SELECT * FROM {prefix}.{table}"
+        query_job = client.query(query)
+        df = query_job.to_dataframe()
+        if df.empty:
+            raise ValueError(f"BigQuery table '{table}' is empty")
+        frames.append(df)
+    return frames
+
+
 def _load_from_database():
     """Read the F1 datasets out of the configured database (MySQL by default).
 
@@ -165,10 +184,20 @@ def _load_from_csv():
 def _load_data_cached():
     """Load all necessary F1 datasets.
 
-    The database is the point of retrieval; the CSVs are only the seed data and
-    stay in place as a fallback so the app still boots if MySQL is down or has
-    not been seeded yet (see scripts/seed_mysql.py).
+    Fallback sequence:
+      1. Google Cloud BigQuery (if BIGQUERY_DATASET environment variable is set)
+      2. Relational database (MySQL or PostgreSQL via DATABASE_URL)
+      3. Seed CSV files (zero-configuration local / CI fallback)
     """
+    bq_dataset = os.getenv("BIGQUERY_DATASET")
+    if bq_dataset:
+        try:
+            frames = _load_from_bigquery(bq_dataset, os.getenv("GCP_PROJECT_ID"))
+            logger.info(f"Loaded F1 datasets from Google Cloud BigQuery dataset '{bq_dataset}'")
+            return frames
+        except Exception as exc:
+            logger.warning(f"BigQuery load failed ({exc}); falling back to SQL database / CSVs")
+
     try:
         results, races, drivers, seasons, constructors, driver_standings = _load_from_database()
         logger.info(f"Loaded F1 datasets from {engine.dialect.name} database")
@@ -176,6 +205,7 @@ def _load_data_cached():
         logger.warning(f"Database load failed ({exc}); falling back to seed CSV files")
         results, races, drivers, seasons, constructors, driver_standings = _load_from_csv()
     return results, races, drivers, seasons, constructors, driver_standings
+
 
 
 def load_data():
