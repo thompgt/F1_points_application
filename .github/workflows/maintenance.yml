@@ -20,9 +20,9 @@ jobs:
     name: Dependency vulnerability audit
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
           cache: pip
@@ -49,9 +49,9 @@ jobs:
       ENABLE_RATE_LIMITING: "false"
       ENABLE_FASTF1_QUALI_GAP: "false"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
           cache: pip
@@ -78,7 +78,7 @@ jobs:
       pull-requests: write
       issues: write
     steps:
-      - uses: actions/stale@v9
+      - uses: actions/stale@v11
         with:
           # Only touches dependabot's own PRs -- human PRs are never auto-closed
           # or auto-labeled here. Bumps that sit unmerged just accumulate merge
