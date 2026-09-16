@@ -88,6 +88,51 @@ class StandingsRequest(BaseModel):
         return list(set(v))  # Remove duplicates
 
 
+class WhatIfRequest(BaseModel):
+    """Request model for calculating what-if standings with excluded drivers."""
+    season_year: int = Field(
+        ...,
+        ge=MIN_SEASON_YEAR,
+        le=MAX_SEASON_YEAR,
+        description="The F1 season year to calculate what-if standings for"
+    )
+    excluded_driver_ids: List[int] = Field(
+        ...,
+        min_length=1,
+        max_length=MAX_DRIVER_IDS,
+        description="List of driver IDs to exclude from the grid"
+    )
+    points_system: Optional[List[int]] = Field(
+        default=None,
+        max_length=MAX_CUSTOM_POINTS_LENGTH,
+        description="Custom points system array (e.g., [25, 18, 15, 12, 10, 8, 6, 4, 2, 1])"
+    )
+
+    @field_validator('points_system')
+    @classmethod
+    def validate_points_system(cls, v: Optional[List[int]]) -> Optional[List[int]]:
+        if v is None:
+            return v
+        if len(v) == 0:
+            raise ValueError("Points system cannot be empty if provided")
+        for i, pts in enumerate(v):
+            if pts < 0:
+                raise ValueError(f"Points at position {i+1} cannot be negative")
+            if pts > 1000:
+                raise ValueError(f"Points at position {i+1} exceeds maximum of 1000")
+        return v
+
+    @field_validator('excluded_driver_ids')
+    @classmethod
+    def validate_excluded_driver_ids(cls, v: List[int]) -> List[int]:
+        if not v:
+            raise ValueError("At least one driver ID must be provided to exclude")
+        for driver_id in v:
+            if driver_id < 1:
+                raise ValueError("Driver IDs must be positive integers")
+        return list(set(v))  # Remove duplicates
+
+
 class SimulateSeasonRequest(BaseModel):
     """Request model for season simulation with AI."""
     season_year: int = Field(

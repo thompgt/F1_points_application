@@ -132,3 +132,52 @@ def test_fastest_lap_on_excluded_driver_is_forfeited():
     pts = dict(zip(scored["driverId"], scored["adjusted_points"]))
     assert pts[1] == 0.0
     assert pts[2] == 25.0  # Gets P1 base points, no FL point
+
+
+from fastapi.testclient import TestClient
+from main import app
+
+client = TestClient(app)
+
+
+def test_api_what_if_2021_exclude_hamilton_and_verstappen():
+    """Excluding Verstappen (830) and Hamilton (1) from 2021 should make Bottas champion."""
+    resp = client.post(
+        "/api/what-if-standings",
+        json={
+            "season_year": 2021,
+            "excluded_driver_ids": [1, 830]
+        }
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "what_if_standings" in data
+    assert "races_summary" in data
+    assert "race_results" in data
+    assert "battle_chart" in data
+    assert "excluded_drivers" in data
+
+    standings = data["what_if_standings"]
+    assert len(standings) > 0
+    new_champion = standings[0]
+    assert new_champion["surname"] == "Bottas"
+    assert new_champion["Position"] == 1
+    assert len(data["excluded_drivers"]) == 2
+
+
+def test_api_what_if_validation_errors():
+    """Verify input validation handles empty or invalid payloads."""
+    # Empty excluded drivers list
+    resp = client.post(
+        "/api/what-if-standings",
+        json={"season_year": 2021, "excluded_driver_ids": []}
+    )
+    assert resp.status_code == 422
+
+    # Negative driver id
+    resp = client.post(
+        "/api/what-if-standings",
+        json={"season_year": 2021, "excluded_driver_ids": [-5]}
+    )
+    assert resp.status_code == 422
+
