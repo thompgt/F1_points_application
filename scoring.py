@@ -342,3 +342,73 @@ def calculate_standings(adjusted_results_with_races: pd.DataFrame, season_year: 
     standings.reset_index(inplace=True)
     standings.rename(columns={"index": "Position"}, inplace=True)
     return standings
+
+
+# ---------------------------------------------------------------------------
+# What-If Scenario Calculation
+# ---------------------------------------------------------------------------
+
+def promote_positions(
+    results_df: pd.DataFrame,
+    excluded_driver_ids: Sequence[int],
+) -> pd.DataFrame:
+    """Return a copy of results_df with excluded drivers removed and positions promoted.
+
+    Only classified finishers behind an excluded driver are promoted upward in
+    order. Non-classified entrants (retirements, collisions, accidents)
+    remain unclassified. Excluded drivers have is_excluded=True and position=NaN.
+    """
+    excluded_set = {int(d) for d in excluded_driver_ids}
+    df = results_df.copy()
+
+    # Track original classified position and exclusion flag
+    orig_pos = classified_position(df)
+    df["original_position"] = orig_pos
+    df["is_excluded"] = df["driverId"].astype(int).isin(excluded_set)
+
+    # Process race by race to ensure correct position promotion per race
+    promoted_dfs = []
+    race_col = "raceId" if "raceId" in df.columns else None
+
+    if race_col is None:
+        groups = [(None, df)]
+    else:
+        groups = df.groupby(race_col, sort=False)
+
+    for _, race_group in groups:
+        rg = race_group.copy()
+        classified_mask = rg["original_position"].notna()
+        active_classified_mask = classified_mask & (~rg["is_excluded"])
+
+        sort_col = "positionOrder" if "positionOrder" in rg.columns else "original_position"
+        active_sorted_indices = rg[active_classified_mask].sort_values(sort_col).index
+
+        # Assign new promoted positions: 1, 2, 3, ...
+        new_positions = list(range(1, len(active_sorted_indices) + 1))
+        rg.loc[active_sorted_indices, "position"] = new_positions
+        if "positionText" in rg.columns:
+            rg.loc[active_sorted_indices, "positionText"] = [str(p) for p in new_positions]
+        if "positionOrder" in rg.columns:
+            rg.loc[active_sorted_indices, "positionOrder"] = new_positions
+
+        # Excluded drivers get position=NaN, positionText='EXC'
+        excluded_indices = rg[rg["is_excluded"]].index
+        if len(excluded_indices) > 0:
+            rg.loc[excluded_indices, "position"] = None
+            if "positionText" in rg.columns:
+                rg.loc[excluded_indices, "positionText"] = "EXC"
+            if "positionOrder" in rg.columns:
+                rg.loc[excluded_indices, "positionOrder"] = len(active_sorted_indices) + 999
+
+        # Calculate position delta for active classified runners
+        rg["position_delta"] = 0
+        if len(active_sorted_indices) > 0:
+            rg.loc[active_sorted_indices, "position_delta"] = (
+                rg.loc[active_sorted_indices, "original_position"].astype(int)
+                - rg.loc[active_sorted_indices, "position"].astype(int)
+            )
+
+        promoted_dfs.append(rg)
+
+    return pd.concat(promoted_dfs, axis=0)
+
