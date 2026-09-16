@@ -181,3 +181,18 @@ def test_api_what_if_validation_errors():
     )
     assert resp.status_code == 422
 
+
+def test_what_if_tab_html_rendered():
+    """Verify that the What-If Scenario tab and its interactive elements are in index.html."""
+    resp = client.get("/")
+    assert resp.status_code == 200
+    html = resp.text
+    assert "What-If Scenario Simulator" in html
+    assert "whatIfSeasonSelect" in html
+    assert "whatIfDriversDropdownBtn" in html
+    assert "whatIfPointsSystemSelect" in html
+    assert "whatIfStandingsTable" in html
+    assert "whatIfBattlePlot" in html
+    assert "whatIfRaceResultsTable" in html
+
+
