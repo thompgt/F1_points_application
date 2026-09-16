@@ -564,9 +564,11 @@ The application includes a [FastMCP](https://github.com/jlowin/fastmcp) server (
 - **SSE URL**: `https://<service-url>/mcp/sse`
 - **Messages URL**: `https://<service-url>/mcp/messages/`
 
-### Google Cloud BigQuery & GCP Architecture
+### Google Cloud Platform (GCP) Architecture & Services
 
-The repository supports **Google Cloud BigQuery** as a serverless analytical data warehouse for historical F1 data.
+> 📖 **Comprehensive Guide:** For full architectural details, service roles, IAM security policies, cost optimizations, and deployment diagrams, see the dedicated [Google Cloud Platform (GCP) Architecture & Role Guide](GOOGLE_CLOUD.md).
+
+The repository supports **Google Cloud BigQuery** as a serverless analytical data warehouse for historical F1 data, and **Google Cloud Storage (GCS)** for persistent report retention and secure v4 Signed URLs.
 
 #### Seeding BigQuery
 

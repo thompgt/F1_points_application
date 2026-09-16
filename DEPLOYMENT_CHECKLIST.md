@@ -1,6 +1,7 @@
 # Google Cloud Deployment & Activation Checklist
 
 This checklist details the steps required to activate live **Google Cloud BigQuery**, **Google Cloud Storage (GCS)**, and **Cloud Run** continuous deployment for the Formula 1 Points Application.
+For full architectural details, service roles, and IAM design, see [GOOGLE_CLOUD.md](GOOGLE_CLOUD.md).
 
 > [!NOTE]
 > **Zero-Configuration Fallback:** No cloud setup is required for local development or automated testing. When GCP variables are unset, the application automatically falls back to local CSV datasets and the `./exports/` directory.
