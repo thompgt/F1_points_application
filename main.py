@@ -982,15 +982,34 @@ def _compute_what_if(season_year: int, excluded_driver_ids: list, rules, points_
         by=['raceId', '_sort_group', '_sort_pos', 'positionOrder']
     )
 
-    # Build orig_winner lookup vectorially
-    orig_p1 = orig_enriched[orig_enriched['positionOrder'] == 1][['raceId', 'forename', 'surname']].copy()
-    orig_p1['orig_winner'] = orig_p1['forename'] + ' ' + orig_p1['surname']
-    orig_winner_map = orig_p1.set_index('raceId')['orig_winner'].to_dict()
+    # Driver full names lookup for podium and pole maps
+    what_if_enriched['full_driver_name'] = what_if_enriched['forename'] + ' ' + what_if_enriched['surname']
+    orig_enriched['full_driver_name'] = orig_enriched['forename'] + ' ' + orig_enriched['surname']
 
-    # Build what-if winner lookup vectorially
-    wi_p1 = what_if_enriched[what_if_enriched['position'] == 1][['raceId', 'forename', 'surname']].copy()
-    wi_p1['wi_winner'] = wi_p1['forename'] + ' ' + wi_p1['surname']
-    wi_winner_map = wi_p1.set_index('raceId')['wi_winner'].to_dict()
+    # Vectorized lookups for what-if P1, P2, P3
+    wi_active_pos = what_if_enriched[what_if_enriched['position'].notna() & (~what_if_enriched['is_excluded'])]
+    wi_p1_map = wi_active_pos[wi_active_pos['position'] == 1].set_index('raceId')['full_driver_name'].to_dict()
+    wi_p2_map = wi_active_pos[wi_active_pos['position'] == 2].set_index('raceId')['full_driver_name'].to_dict()
+    wi_p3_map = wi_active_pos[wi_active_pos['position'] == 3].set_index('raceId')['full_driver_name'].to_dict()
+
+    # Vectorized lookups for original P1, P2, P3
+    orig_active_pos = orig_enriched[orig_enriched['positionOrder'].notna()]
+    orig_p1_map = orig_active_pos[orig_active_pos['positionOrder'] == 1].set_index('raceId')['full_driver_name'].to_dict()
+    orig_p2_map = orig_active_pos[orig_active_pos['positionOrder'] == 2].set_index('raceId')['full_driver_name'].to_dict()
+    orig_p3_map = orig_active_pos[orig_active_pos['positionOrder'] == 3].set_index('raceId')['full_driver_name'].to_dict()
+
+    # Pole Sitter lookups (grid > 0 sorted by grid position)
+    if 'grid' in orig_enriched.columns:
+        orig_grid = orig_enriched[orig_enriched['grid'] > 0].sort_values(['raceId', 'grid'])
+        orig_pole_map = orig_grid.drop_duplicates(subset=['raceId'], keep='first').set_index('raceId')['full_driver_name'].to_dict()
+    else:
+        orig_pole_map = {}
+
+    if 'grid' in what_if_enriched.columns:
+        wi_grid = what_if_enriched[(what_if_enriched['grid'] > 0) & (~what_if_enriched['is_excluded'])].sort_values(['raceId', 'grid'])
+        wi_pole_map = wi_grid.drop_duplicates(subset=['raceId'], keep='first').set_index('raceId')['full_driver_name'].to_dict()
+    else:
+        wi_pole_map = {}
 
     # Build result rows vectorially using groupby
     needed_cols = [
@@ -1036,16 +1055,32 @@ def _compute_what_if(season_year: int, excluded_driver_ids: list, rules, points_
     races_summary = []
     for _, r in sorted_races.iterrows():
         r_id = int(r['raceId'])
-        orig_winner = orig_winner_map.get(r_id, 'Unknown')
-        what_if_winner = wi_winner_map.get(r_id, 'None')
+        orig_winner = orig_p1_map.get(r_id, 'Unknown')
+        what_if_winner = wi_p1_map.get(r_id, 'None')
+        orig_p2 = orig_p2_map.get(r_id, 'None')
+        what_if_p2 = wi_p2_map.get(r_id, 'None')
+        orig_p3 = orig_p3_map.get(r_id, 'None')
+        what_if_p3 = wi_p3_map.get(r_id, 'None')
+        orig_pole = orig_pole_map.get(r_id, 'None')
+        what_if_pole = wi_pole_map.get(r_id, orig_pole)
+
         races_summary.append({
             "raceId": r_id,
             "round": int(r['round']) if 'round' in r and pd.notna(r.get('round')) else None,
             "name": r['name'],
             "date": str(r['date']) if 'date' in r and pd.notna(r.get('date')) else '',
+            "pole_sitter": what_if_pole,
+            "original_pole_sitter": orig_pole,
+            "pole_changed": orig_pole != what_if_pole,
             "original_winner": orig_winner,
             "what_if_winner": what_if_winner,
             "winner_changed": orig_winner != what_if_winner,
+            "original_p2": orig_p2,
+            "what_if_p2": what_if_p2,
+            "p2_changed": orig_p2 != what_if_p2,
+            "original_p3": orig_p3,
+            "what_if_p3": what_if_p3,
+            "p3_changed": orig_p3 != what_if_p3,
         })
 
     return {

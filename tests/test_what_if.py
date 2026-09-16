@@ -164,6 +164,21 @@ def test_api_what_if_2021_exclude_hamilton_and_verstappen():
     assert new_champion["Position"] == 1
     assert len(data["excluded_drivers"]) == 2
 
+    # Verify races_summary contains pole_sitter, winner, p2, p3
+    races_summary = data["races_summary"]
+    assert len(races_summary) > 0
+    first_race = races_summary[0]
+    assert "pole_sitter" in first_race
+    assert "original_pole_sitter" in first_race
+    assert "what_if_winner" in first_race
+    assert "original_winner" in first_race
+    assert "what_if_p2" in first_race
+    assert "original_p2" in first_race
+    assert "what_if_p3" in first_race
+    assert "original_p3" in first_race
+    assert "winner_changed" in first_race
+    assert "pole_changed" in first_race
+
 
 def test_api_what_if_validation_errors():
     """Verify input validation handles empty or invalid payloads."""

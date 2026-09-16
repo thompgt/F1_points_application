@@ -950,6 +950,32 @@
                                         </table>
                                     </div>
                                 </div>
+
+                                <!-- Aggregate Season Races Summary Table (All Races) -->
+                                <div class="chart-container mb-4" id="whatIfAllRacesContainer">
+                                    <div class="d-flex flex-wrap justify-content-between align-items-center mb-2 gap-2">
+                                        <h4 class="mb-0"><i class="fas fa-list-check text-danger me-2"></i> All Races Summary</h4>
+                                        <span class="badge bg-dark border border-secondary text-uppercase px-2 py-1"><i class="fas fa-flag-checkered text-warning me-1"></i> Full Season Overview</span>
+                                    </div>
+                                    <p class="text-muted small mb-3">
+                                        Aggregate round-by-round summary for all races: Pole Sitter, Race Winner (P1), P2, and P3. Click any Grand Prix to inspect full classification.
+                                    </p>
+                                    <div class="table-responsive">
+                                        <table class="table table-hover align-middle mb-0" id="whatIfAllRacesTable">
+                                            <thead>
+                                                <tr>
+                                                    <th style="width: 60px;" class="text-center">Rnd</th>
+                                                    <th>Grand Prix</th>
+                                                    <th><i class="fas fa-stopwatch text-info me-1"></i> Pole Sitter</th>
+                                                    <th><i class="fas fa-trophy text-warning me-1"></i> Winner (P1)</th>
+                                                    <th><i class="fas fa-medal text-light me-1"></i> P2</th>
+                                                    <th><i class="fas fa-award" style="color: #cd7f32;"></i> P3</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody id="whatIfAllRacesBody"></tbody>
+                                        </table>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                         <!-- /#whatif-pane -->
@@ -2106,6 +2132,8 @@
                 renderWhatIfRaceResults();
             }
 
+            renderWhatIfAllRacesSummary(data.races_summary || []);
+
             document.getElementById('whatIfResults').scrollIntoView({ behavior: 'smooth' });
         }
 
@@ -2188,6 +2216,93 @@
                 }
                 tbody.appendChild(tr);
             });
+        }
+
+        function renderWhatIfAllRacesSummary(racesSummary) {
+            const tbody = document.getElementById('whatIfAllRacesBody');
+            if (!tbody) return;
+            tbody.innerHTML = '';
+
+            if (!racesSummary || racesSummary.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-3">No races found for this season.</td></tr>';
+                return;
+            }
+
+            racesSummary.forEach(r => {
+                const tr = document.createElement('tr');
+
+                const renderDriverCell = (driverName, origName, changed, textClass, iconHtml) => {
+                    if (!driverName || driverName === 'None' || driverName === 'N/A') {
+                        return '<span class="text-muted">—</span>';
+                    }
+                    let badgeHtml = '';
+                    if (changed && origName && origName !== 'Unknown' && origName !== 'None' && origName !== 'N/A') {
+                        badgeHtml = `<span class="badge bg-warning text-dark ms-1" style="font-size: 0.65rem;" title="Originally: ${origName}">★ Promoted</span>`;
+                    }
+                    return `<div class="d-flex align-items-center ${textClass}">
+                        ${iconHtml ? `<span class="me-2">${iconHtml}</span>` : ''}
+                        <span class="fw-semibold">${driverName}</span>
+                        ${badgeHtml}
+                    </div>`;
+                };
+
+                const rndText = r.round !== null && r.round !== undefined ? `R${r.round}` : '-';
+                const poleHtml = renderDriverCell(
+                    r.pole_sitter,
+                    r.original_pole_sitter,
+                    r.pole_changed,
+                    'text-info',
+                    '<i class="fas fa-stopwatch text-info" style="font-size: 0.85rem;"></i>'
+                );
+                const winnerHtml = renderDriverCell(
+                    r.what_if_winner,
+                    r.original_winner,
+                    r.winner_changed,
+                    'text-warning',
+                    '<i class="fas fa-trophy text-warning" style="font-size: 0.85rem;"></i>'
+                );
+                const p2Html = renderDriverCell(
+                    r.what_if_p2,
+                    r.original_p2,
+                    r.p2_changed,
+                    'text-light',
+                    '<i class="fas fa-medal text-secondary" style="font-size: 0.85rem;"></i>'
+                );
+                const p3Html = renderDriverCell(
+                    r.what_if_p3,
+                    r.original_p3,
+                    r.p3_changed,
+                    '',
+                    '<i class="fas fa-award" style="color: #cd7f32; font-size: 0.85rem;"></i>'
+                );
+
+                tr.innerHTML = `
+                    <td class="text-center text-muted fw-bold">${rndText}</td>
+                    <td>
+                        <a href="javascript:void(0)" class="text-white fw-bold text-decoration-none" onclick="selectWhatIfRace(${r.raceId})" title="Click to view detailed classification for this race">
+                            ${r.name} <i class="fas fa-external-link-alt ms-1 text-muted" style="font-size: 0.7rem;"></i>
+                        </a>
+                        ${r.date ? `<div class="text-muted" style="font-size: 0.75rem;">${r.date}</div>` : ''}
+                    </td>
+                    <td>${poleHtml}</td>
+                    <td>${winnerHtml}</td>
+                    <td>${p2Html}</td>
+                    <td>${p3Html}</td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+
+        function selectWhatIfRace(raceId) {
+            const raceSelect = document.getElementById('whatIfRaceSelect');
+            if (raceSelect) {
+                raceSelect.value = String(raceId);
+                renderWhatIfRaceResults();
+                const raceSection = document.getElementById('whatIfRaceResultsTable');
+                if (raceSection) {
+                    raceSection.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }
+            }
         }
     </script>
 </body>
