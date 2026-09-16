@@ -825,9 +825,248 @@ async def calculate_standings_api(request: StandingsRequest):
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
+def _compute_what_if(season_year: int, excluded_driver_ids: list, rules, points_system_name: str):
+    """Synchronous CPU-bound computation for the what-if scenario.
+
+    Extracted from the async handler so it can be offloaded to a thread via
+    asyncio.to_thread(), keeping the event loop unblocked.
+    """
+    results, races, drivers, seasons, constructors, driver_standings = load_data()
+
+    season_races = races[races['year'] == season_year].copy()
+    if season_races.empty:
+        raise ValueError(f"NO_DATA:{season_year}")
+
+    season_race_ids = season_races['raceId'].unique()
+    season_results = results[results['raceId'].isin(season_race_ids)].copy()
+    if season_results.empty:
+        raise ValueError(f"NO_RESULTS:{season_year}")
+
+    # Build a race metadata lookup (avoids repeated filtering in the per-race loop)
+    race_cols = ['raceId', 'year', 'name']
+    if 'round' in races.columns:
+        race_cols.append('round')
+    if 'date' in races.columns:
+        race_cols.append('date')
+    race_meta = races[race_cols].set_index('raceId')
+
+    # 1. Baseline (Original) Standings & Results
+    orig_adjusted = scoring.adjust_points(season_results.copy(), rules, races=races)
+    orig_enriched = orig_adjusted.merge(
+        drivers[['driverId', 'surname', 'forename']], on='driverId', how='left'
+    ).merge(
+        constructors[['constructorId', 'name']].rename(columns={'name': 'constructor_name'}),
+        on='constructorId', how='left'
+    ).merge(races[race_cols], on='raceId', how='left')
+
+    orig_standings = scoring.calculate_standings(orig_enriched, season_year)
+
+    # 2. What-If Promoted Results
+    promoted_results = scoring.promote_positions(season_results, excluded_driver_ids)
+    what_if_adjusted = scoring.adjust_points(promoted_results, rules, races=races)
+    what_if_enriched = what_if_adjusted.merge(
+        drivers[['driverId', 'surname', 'forename']], on='driverId', how='left'
+    ).merge(
+        constructors[['constructorId', 'name']].rename(columns={'name': 'constructor_name'}),
+        on='constructorId', how='left'
+    ).merge(races[race_cols], on='raceId', how='left')
+
+    # 3. What-If Championship Standings
+    what_if_standings = scoring.calculate_standings(what_if_enriched, season_year)
+    if what_if_standings.empty:
+        raise ValueError("NO_CLASSIFIED_DRIVERS")
+
+    # Determine primary constructor per driver in what-if season
+    season_rows = what_if_enriched[what_if_enriched['year'] == season_year]
+    if not season_rows.empty:
+        constructor_mode = (
+            season_rows
+            .groupby(['surname', 'forename', 'constructor_name'], as_index=False)['raceId']
+            .count()
+            .sort_values(['surname', 'forename', 'raceId'], ascending=[True, True, False])
+            .drop_duplicates(subset=['surname', 'forename'], keep='first')
+        )
+        what_if_standings = what_if_standings.merge(
+            constructor_mode[['surname', 'forename', 'constructor_name']],
+            on=['surname', 'forename'], how='left'
+        )
+
+    # Map driverId back into standings for easy reference
+    driver_id_lookup = drivers[['driverId', 'surname', 'forename']].drop_duplicates()
+    what_if_standings = what_if_standings.merge(driver_id_lookup, on=['surname', 'forename'], how='left')
+
+    # Compute comparison with original standings
+    if not orig_standings.empty:
+        orig_comp = orig_standings[['surname', 'forename', 'Position', 'adjusted_points']].rename(
+            columns={'Position': 'orig_position', 'adjusted_points': 'orig_points'}
+        )
+        what_if_standings = what_if_standings.merge(orig_comp, on=['surname', 'forename'], how='left')
+        what_if_standings['points_delta'] = (
+            what_if_standings['adjusted_points'] - what_if_standings['orig_points'].fillna(0.0)
+        ).round(1)
+        what_if_standings['position_delta'] = (
+            what_if_standings['orig_position'] - what_if_standings['Position']
+        ).fillna(0).astype(int)
+    else:
+        what_if_standings['orig_position'] = None
+        what_if_standings['orig_points'] = 0.0
+        what_if_standings['points_delta'] = 0.0
+        what_if_standings['position_delta'] = 0
+
+    # Wins and Podiums counts under what-if (vectorized, no loops)
+    active_classified = what_if_enriched[what_if_enriched['position'].notna()]
+    what_if_wins = (
+        active_classified[active_classified['position'] == 1]
+        .groupby(['surname', 'forename'], as_index=False)
+        .size()
+        .rename(columns={'size': 'what_if_wins'})
+    )
+    what_if_podiums = (
+        active_classified[active_classified['position'] <= 3]
+        .groupby(['surname', 'forename'], as_index=False)
+        .size()
+        .rename(columns={'size': 'what_if_podiums'})
+    )
+    what_if_standings = what_if_standings.merge(what_if_wins, on=['surname', 'forename'], how='left')
+    what_if_standings = what_if_standings.merge(what_if_podiums, on=['surname', 'forename'], how='left')
+    what_if_standings['what_if_wins'] = what_if_standings['what_if_wins'].fillna(0).astype(int)
+    what_if_standings['what_if_podiums'] = what_if_standings['what_if_podiums'].fillna(0).astype(int)
+
+    # 4. Excluded Drivers Metadata
+    excluded_drivers_list = []
+    for d_id in excluded_driver_ids:
+        d_rows = drivers[drivers['driverId'] == d_id]
+        if not d_rows.empty:
+            d = d_rows.iloc[0]
+            orig_match = orig_standings[
+                (orig_standings['surname'] == d['surname']) &
+                (orig_standings['forename'] == d['forename'])
+            ]
+            orig_pos = int(orig_match.iloc[0]['Position']) if not orig_match.empty else None
+            orig_pts = float(orig_match.iloc[0]['adjusted_points']) if not orig_match.empty else 0.0
+            excluded_drivers_list.append({
+                "driverId": int(d_id),
+                "name": f"{d['forename']} {d['surname']}",
+                "forename": d['forename'],
+                "surname": d['surname'],
+                "original_position": orig_pos,
+                "original_points": orig_pts
+            })
+
+    # 5. Battle Chart for New Top 10 Drivers
+    top_10 = what_if_standings.head(10)
+    top_10_driver_ids = top_10['driverId'].dropna().astype(int).tolist()
+    battle_chart = create_what_if_battle_chart(
+        what_if_enriched, top_10_driver_ids, season_year, points_system_name
+    )
+
+    # 6. Race-by-Race Promoted Results and Summaries (vectorized)
+    # Merge original race-level points delta into what_if_enriched
+    orig_pts_map = orig_enriched[['raceId', 'driverId', 'adjusted_points']].rename(
+        columns={'adjusted_points': 'orig_race_points'}
+    )
+    what_if_enriched = what_if_enriched.merge(orig_pts_map, on=['raceId', 'driverId'], how='left')
+    what_if_enriched['orig_race_points'] = what_if_enriched['orig_race_points'].fillna(0.0)
+    what_if_enriched['race_points_delta'] = (
+        what_if_enriched['adjusted_points'] - what_if_enriched['orig_race_points']
+    ).round(1)
+
+    # Build sort key vectorially: classified active=0, DNF active=1, excluded=2
+    sort_group = pd.Series(1, index=what_if_enriched.index)  # default: unclassified
+    sort_group[what_if_enriched['is_excluded']] = 2
+    sort_group[what_if_enriched['position'].notna() & ~what_if_enriched['is_excluded']] = 0
+    what_if_enriched = what_if_enriched.copy()
+    what_if_enriched['_sort_group'] = sort_group
+    what_if_enriched['_sort_pos'] = what_if_enriched['position'].fillna(999)
+    what_if_enriched = what_if_enriched.sort_values(
+        by=['raceId', '_sort_group', '_sort_pos', 'positionOrder']
+    )
+
+    # Build orig_winner lookup vectorially
+    orig_p1 = orig_enriched[orig_enriched['positionOrder'] == 1][['raceId', 'forename', 'surname']].copy()
+    orig_p1['orig_winner'] = orig_p1['forename'] + ' ' + orig_p1['surname']
+    orig_winner_map = orig_p1.set_index('raceId')['orig_winner'].to_dict()
+
+    # Build what-if winner lookup vectorially
+    wi_p1 = what_if_enriched[what_if_enriched['position'] == 1][['raceId', 'forename', 'surname']].copy()
+    wi_p1['wi_winner'] = wi_p1['forename'] + ' ' + wi_p1['surname']
+    wi_winner_map = wi_p1.set_index('raceId')['wi_winner'].to_dict()
+
+    # Build result rows vectorially using groupby
+    needed_cols = [
+        'raceId', 'driverId', 'forename', 'surname', 'constructor_name',
+        'position', 'positionText', 'original_position', 'position_delta',
+        'adjusted_points', 'orig_race_points', 'race_points_delta', 'is_excluded',
+        '_sort_group', '_sort_pos'
+    ]
+    if 'laps' in what_if_enriched.columns:
+        needed_cols.append('laps')
+    if 'time' in what_if_enriched.columns:
+        needed_cols.append('time')
+    wi_slim = what_if_enriched[[c for c in needed_cols if c in what_if_enriched.columns]].copy()
+
+    def _make_race_rows(grp):
+        rows = []
+        for _, res in grp.iterrows():
+            rows.append({
+                "driverId": int(res['driverId']),
+                "driver_name": f"{res['forename']} {res['surname']}",
+                "constructor_name": res.get('constructor_name', '') or '',
+                "position": int(res['position']) if pd.notna(res.get('position')) else None,
+                "position_text": str(res['positionText']) if pd.notna(res.get('positionText')) else '',
+                "original_position": int(res['original_position']) if pd.notna(res.get('original_position')) else None,
+                "position_delta": int(res.get('position_delta', 0) or 0),
+                "points": float(res['adjusted_points']),
+                "orig_points": float(res['orig_race_points']),
+                "points_delta": float(res['race_points_delta']),
+                "laps": int(res['laps']) if 'laps' in res.index and pd.notna(res.get('laps')) else None,
+                "time": str(res['time']) if 'time' in res.index and pd.notna(res.get('time')) else '',
+                "is_excluded": bool(res['is_excluded'])
+            })
+        return rows
+
+    race_results_by_race_id = {
+        str(rid): _make_race_rows(grp)
+        for rid, grp in wi_slim.groupby('raceId', sort=False)
+    }
+
+    # Build races_summary
+    sort_race_cols = ['round'] if 'round' in season_races.columns else ['raceId']
+    sorted_races = season_races.sort_values(by=sort_race_cols)
+    races_summary = []
+    for _, r in sorted_races.iterrows():
+        r_id = int(r['raceId'])
+        orig_winner = orig_winner_map.get(r_id, 'Unknown')
+        what_if_winner = wi_winner_map.get(r_id, 'None')
+        races_summary.append({
+            "raceId": r_id,
+            "round": int(r['round']) if 'round' in r and pd.notna(r.get('round')) else None,
+            "name": r['name'],
+            "date": str(r['date']) if 'date' in r and pd.notna(r.get('date')) else '',
+            "original_winner": orig_winner,
+            "what_if_winner": what_if_winner,
+            "winner_changed": orig_winner != what_if_winner,
+        })
+
+    return {
+        "season_year": season_year,
+        "points_system_name": points_system_name,
+        "what_if_standings": what_if_standings.to_dict('records'),
+        "excluded_drivers": excluded_drivers_list,
+        "battle_chart": battle_chart,
+        "races_summary": races_summary,
+        "race_results": race_results_by_race_id,
+    }
+
+
 @app.post("/api/what-if-standings")
 async def calculate_what_if_standings_api(request: WhatIfRequest):
-    """Calculate what-if standings and per-race promoted results excluding specified drivers."""
+    """Calculate what-if standings and per-race promoted results excluding specified drivers.
+
+    The heavy pandas computation is offloaded to a thread pool via asyncio.to_thread
+    so the async event loop is not blocked during calculation.
+    """
+    import asyncio
     try:
         # Resolve scoring rules
         if request.points_system is None:
@@ -838,232 +1077,24 @@ async def calculate_what_if_standings_api(request: WhatIfRequest):
             rules = scoring.ScoringRules(points=tuple(request.points_system))
         points_system_name = scoring.points_system_label(request.points_system)
 
-        # Load raw datasets
-        results, races, drivers, seasons, constructors, driver_standings = load_data()
+        result = await asyncio.to_thread(
+            _compute_what_if,
+            request.season_year,
+            request.excluded_driver_ids,
+            rules,
+            points_system_name,
+        )
+        return result
 
-        # Check season races
-        season_races = races[races['year'] == request.season_year].copy()
-        if season_races.empty:
+    except ValueError as ve:
+        msg = str(ve)
+        if msg.startswith("NO_DATA:"):
             raise HTTPException(status_code=404, detail=f"No data found for season {request.season_year}")
-
-        season_race_ids = season_races['raceId'].unique()
-        season_results = results[results['raceId'].isin(season_race_ids)].copy()
-        if season_results.empty:
+        elif msg.startswith("NO_RESULTS:"):
             raise HTTPException(status_code=404, detail=f"No race results found for season {request.season_year}")
-
-        # 1. Baseline (Original) Standings & Results
-        orig_adjusted = scoring.adjust_points(season_results.copy(), rules, races=races)
-        orig_enriched = pd.merge(
-            orig_adjusted,
-            drivers[['driverId', 'surname', 'forename']],
-            on='driverId',
-            how='left'
-        )
-        orig_enriched = pd.merge(
-            orig_enriched,
-            constructors[['constructorId', 'name']].rename(columns={'name': 'constructor_name'}),
-            on='constructorId',
-            how='left'
-        )
-        race_cols = ['raceId', 'year', 'name']
-        if 'round' in races.columns:
-            race_cols.append('round')
-        orig_enriched = pd.merge(orig_enriched, races[race_cols], on='raceId', how='left')
-        orig_standings = scoring.calculate_standings(orig_enriched, request.season_year)
-
-        # 2. What-If Promoted Results
-        promoted_results = scoring.promote_positions(season_results, request.excluded_driver_ids)
-        what_if_adjusted = scoring.adjust_points(promoted_results, rules, races=races)
-        what_if_enriched = pd.merge(
-            what_if_adjusted,
-            drivers[['driverId', 'surname', 'forename']],
-            on='driverId',
-            how='left'
-        )
-        what_if_enriched = pd.merge(
-            what_if_enriched,
-            constructors[['constructorId', 'name']].rename(columns={'name': 'constructor_name'}),
-            on='constructorId',
-            how='left'
-        )
-        what_if_enriched = pd.merge(what_if_enriched, races[race_cols], on='raceId', how='left')
-
-        # 3. What-If Championship Standings
-        what_if_standings = scoring.calculate_standings(what_if_enriched, request.season_year)
-        if what_if_standings.empty:
+        elif msg == "NO_CLASSIFIED_DRIVERS":
             raise HTTPException(status_code=404, detail="No classified drivers remaining in this what-if scenario")
-
-        # Determine primary constructor per driver in what-if season
-        season_rows = what_if_enriched[what_if_enriched['year'] == request.season_year]
-        if not season_rows.empty:
-            constructor_mode = (
-                season_rows
-                .groupby(['surname', 'forename', 'constructor_name'], as_index=False)['raceId']
-                .count()
-                .sort_values(['surname', 'forename', 'raceId'], ascending=[True, True, False])
-                .drop_duplicates(subset=['surname', 'forename'], keep='first')
-            )
-            what_if_standings = pd.merge(
-                what_if_standings,
-                constructor_mode[['surname', 'forename', 'constructor_name']],
-                on=['surname', 'forename'],
-                how='left'
-            )
-
-        # Map driverId back into standings for easy reference
-        driver_id_lookup = drivers[['driverId', 'surname', 'forename']].drop_duplicates()
-        what_if_standings = pd.merge(what_if_standings, driver_id_lookup, on=['surname', 'forename'], how='left')
-
-        # Compute comparison with original standings
-        if not orig_standings.empty:
-            orig_comp = orig_standings[['surname', 'forename', 'Position', 'adjusted_points']].rename(
-                columns={'Position': 'orig_position', 'adjusted_points': 'orig_points'}
-            )
-            what_if_standings = pd.merge(what_if_standings, orig_comp, on=['surname', 'forename'], how='left')
-            what_if_standings['points_delta'] = (
-                what_if_standings['adjusted_points'] - what_if_standings['orig_points'].fillna(0.0)
-            ).round(1)
-            what_if_standings['position_delta'] = (
-                what_if_standings['orig_position'] - what_if_standings['Position']
-            ).fillna(0).astype(int)
-        else:
-            what_if_standings['orig_position'] = None
-            what_if_standings['orig_points'] = 0.0
-            what_if_standings['points_delta'] = 0.0
-            what_if_standings['position_delta'] = 0
-
-        # Wins and Podiums counts under what-if
-        active_classified = what_if_enriched[what_if_enriched['position'].notna()]
-        what_if_wins = (
-            active_classified[active_classified['position'] == 1]
-            .groupby(['surname', 'forename'], as_index=False)
-            .size()
-            .rename(columns={'size': 'what_if_wins'})
-        )
-        what_if_podiums = (
-            active_classified[active_classified['position'] <= 3]
-            .groupby(['surname', 'forename'], as_index=False)
-            .size()
-            .rename(columns={'size': 'what_if_podiums'})
-        )
-        what_if_standings = pd.merge(what_if_standings, what_if_wins, on=['surname', 'forename'], how='left')
-        what_if_standings = pd.merge(what_if_standings, what_if_podiums, on=['surname', 'forename'], how='left')
-        what_if_standings['what_if_wins'] = what_if_standings['what_if_wins'].fillna(0).astype(int)
-        what_if_standings['what_if_podiums'] = what_if_standings['what_if_podiums'].fillna(0).astype(int)
-
-        # 4. Excluded Drivers Metadata
-        excluded_drivers_list = []
-        for d_id in request.excluded_driver_ids:
-            d_rows = drivers[drivers['driverId'] == d_id]
-            if not d_rows.empty:
-                d = d_rows.iloc[0]
-                orig_match = orig_standings[
-                    (orig_standings['surname'] == d['surname']) &
-                    (orig_standings['forename'] == d['forename'])
-                ]
-                orig_pos = int(orig_match.iloc[0]['Position']) if not orig_match.empty else None
-                orig_pts = float(orig_match.iloc[0]['adjusted_points']) if not orig_match.empty else 0.0
-                excluded_drivers_list.append({
-                    "driverId": int(d_id),
-                    "name": f"{d['forename']} {d['surname']}",
-                    "forename": d['forename'],
-                    "surname": d['surname'],
-                    "original_position": orig_pos,
-                    "original_points": orig_pts
-                })
-
-        # 5. Battle Chart for New Top 10 Drivers
-        top_10 = what_if_standings.head(10)
-        top_10_driver_ids = top_10['driverId'].dropna().astype(int).tolist()
-        battle_chart = create_what_if_battle_chart(
-            what_if_enriched, top_10_driver_ids, request.season_year, points_system_name
-        )
-
-        # 6. Race-by-Race Promoted Results and Summaries
-        sort_race_cols = ['round'] if 'round' in season_races.columns else ['raceId']
-        sorted_races = season_races.sort_values(by=sort_race_cols)
-
-        # Merge original points to what_if_enriched for per-result points delta
-        orig_pts_map = orig_enriched[['raceId', 'driverId', 'adjusted_points']].rename(
-            columns={'adjusted_points': 'orig_race_points'}
-        )
-        what_if_enriched = pd.merge(what_if_enriched, orig_pts_map, on=['raceId', 'driverId'], how='left')
-        what_if_enriched['orig_race_points'] = what_if_enriched['orig_race_points'].fillna(0.0)
-        what_if_enriched['race_points_delta'] = (
-            what_if_enriched['adjusted_points'] - what_if_enriched['orig_race_points']
-        ).round(1)
-
-        races_summary = []
-        race_results_by_race_id = {}
-
-        for _, r in sorted_races.iterrows():
-            r_id = int(r['raceId'])
-            r_name = r['name']
-            r_round = int(r['round']) if 'round' in r and pd.notna(r['round']) else None
-            r_date = str(r['date']) if 'date' in r and pd.notna(r['date']) else ""
-
-            # Filter results for this race
-            r_results = what_if_enriched[what_if_enriched['raceId'] == r_id].copy()
-            r_results['sort_key'] = r_results.apply(
-                lambda row: (2, 999) if row['is_excluded'] else ((0, row['position']) if pd.notna(row['position']) else (1, row['positionOrder'])),
-                axis=1
-            )
-            r_results = r_results.sort_values('sort_key').drop(columns=['sort_key'])
-
-            # Determine winners
-            orig_winner_row = orig_enriched[
-                (orig_enriched['raceId'] == r_id) & (orig_enriched['positionOrder'] == 1)
-            ]
-            orig_winner = (
-                f"{orig_winner_row.iloc[0]['forename']} {orig_winner_row.iloc[0]['surname']}"
-                if not orig_winner_row.empty else "Unknown"
-            )
-
-            what_if_winner_row = r_results[r_results['position'] == 1]
-            what_if_winner = (
-                f"{what_if_winner_row.iloc[0]['forename']} {what_if_winner_row.iloc[0]['surname']}"
-                if not what_if_winner_row.empty else "None"
-            )
-
-            races_summary.append({
-                "raceId": r_id,
-                "round": r_round,
-                "name": r_name,
-                "date": r_date,
-                "original_winner": orig_winner,
-                "what_if_winner": what_if_winner,
-                "winner_changed": (orig_winner != what_if_winner)
-            })
-
-            race_rows = []
-            for _, res in r_results.iterrows():
-                race_rows.append({
-                    "driverId": int(res['driverId']),
-                    "driver_name": f"{res['forename']} {res['surname']}",
-                    "constructor_name": res.get('constructor_name', ''),
-                    "position": int(res['position']) if pd.notna(res['position']) else None,
-                    "position_text": str(res['positionText']) if pd.notna(res['positionText']) else "",
-                    "original_position": int(res['original_position']) if pd.notna(res['original_position']) else None,
-                    "position_delta": int(res.get('position_delta', 0)),
-                    "points": float(res['adjusted_points']),
-                    "orig_points": float(res['orig_race_points']),
-                    "points_delta": float(res['race_points_delta']),
-                    "laps": int(res['laps']) if 'laps' in res and pd.notna(res['laps']) else None,
-                    "time": str(res['time']) if 'time' in res and pd.notna(res['time']) else "",
-                    "is_excluded": bool(res['is_excluded'])
-                })
-            race_results_by_race_id[str(r_id)] = race_rows
-
-        return {
-            "season_year": request.season_year,
-            "points_system_name": points_system_name,
-            "what_if_standings": what_if_standings.to_dict('records'),
-            "excluded_drivers": excluded_drivers_list,
-            "battle_chart": battle_chart,
-            "races_summary": races_summary,
-            "race_results": race_results_by_race_id
-        }
-
+        raise HTTPException(status_code=500, detail="Internal server error")
     except HTTPException:
         raise
     except Exception as e:
