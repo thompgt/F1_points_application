@@ -1,9 +1,7 @@
 """Unit tests for the What-If Scenario position promotion and scoring in ``scoring.py``."""
 
 import pandas as pd
-import pytest
 
-import scoring
 from scoring import (
     ScoringRules,
     adjust_points,
@@ -231,7 +229,7 @@ def test_promote_positions_all_drivers_excluded():
         (1, 2, "2", 2, 0),
     ])
     promoted = promote_positions(race, excluded_driver_ids=[1, 2])
-    assert (promoted["is_excluded"] == True).all()
+    assert promoted["is_excluded"].all()
     assert promoted["position"].isna().all()
     assert (promoted["positionText"] == "EXC").all()
 

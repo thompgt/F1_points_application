@@ -848,7 +848,6 @@ def _compute_what_if(season_year: int, excluded_driver_ids: list, rules, points_
         race_cols.append('round')
     if 'date' in races.columns:
         race_cols.append('date')
-    race_meta = races[race_cols].set_index('raceId')
 
     # 1. Baseline (Original) Standings & Results
     orig_adjusted = scoring.adjust_points(season_results.copy(), rules, races=races)
