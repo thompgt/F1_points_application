@@ -346,7 +346,7 @@ python-multipart==0.0.32
     #   mcp
 pytz==2026.3.post1
     # via pandas
-pywin32==312
+pywin32==312; sys_platform == 'win32'
     # via mcp
 pyyaml==6.0.3
     # via
