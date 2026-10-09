@@ -142,3 +142,33 @@ def test_mcp_sse_mount(client):
     assert response.status_code == 400
 
 
+def test_chat_assistant_recalculate(client):
+    """Verify /api/chat handles championship recalculation queries."""
+    resp = client.post("/api/chat", json={"message": "Who won the 2008 championship with modern points?"})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "reply" in data
+    assert data["tool_called"] == "calculate_championship_standings"
+    assert "2008" in data["reply"]
+    assert len(data["suggestions"]) > 0
+
+
+def test_chat_assistant_head_to_head(client):
+    """Verify /api/chat handles head-to-head comparison queries."""
+    resp = client.post("/api/chat", json={"message": "Compare Hamilton vs Alonso in 2007"})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["tool_called"] == "get_driver_head_to_head"
+    assert "Hamilton" in data["reply"]
+    assert "Alonso" in data["reply"]
+
+
+def test_chat_assistant_race_results(client):
+    """Verify /api/chat handles race result queries."""
+    resp = client.post("/api/chat", json={"message": "Who won Monaco 2021?"})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["tool_called"] == "get_race_results"
+    assert "Monaco" in data["reply"]
+
+

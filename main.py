@@ -35,7 +35,8 @@ from validators import (
     StandingsRequest,
     SimulateSeasonRequest,
     RaceResultsRequest,
-    WhatIfRequest
+    WhatIfRequest,
+    ChatRequest
 )
 from middleware import add_middleware_stack, get_logger
 from health import router as health_router
@@ -2079,6 +2080,203 @@ async def get_report_url_api(filename: str):
         "download_url": signed_url,
         "expires_in_minutes": gcs_storage.get_signed_url_expiration_minutes()
     }
+
+
+@app.post("/api/chat")
+async def chat_assistant_endpoint(request: ChatRequest):
+    """In-browser AI chat assistant powered by the FastMCP analytics engine."""
+    import mcp_server
+    import requests as http_requests
+    import re
+
+    msg = request.message.strip()
+    msg_lower = msg.lower()
+
+    tool_called = None
+    tool_args = {}
+    structured_data = None
+    reply = ""
+
+    # Extract year if present (4 digits from 1950 to 2026)
+    year_match = re.search(r'\b(19[5-9]\d|20[0-2]\d)\b', msg)
+    season_year = int(year_match.group(1)) if year_match else None
+
+    # Check for known driver keywords
+    known_drivers = [
+        "hamilton", "verstappen", "alonso", "vettel", "schumacher", "senna", "prost",
+        "leclerc", "norris", "russell", "piastri", "sainz", "perez", "bottas", "raikkonen",
+        "button", "rosberg", "ricciardo", "gasly", "ocon", "hulkenberg", "tsunoda",
+        "albon", "stroll", "mansell", "piquet", "lauda", "hunt", "stewart", "clark",
+        "fangio", "moss", "hill", "villeneuve", "massa", "webber", "barrichello"
+    ]
+    detected_drivers = [d for d in known_drivers if d in msg_lower]
+
+    # Check for race / circuit keywords
+    known_races = [
+        "monaco", "silverstone", "monza", "spa", "abu dhabi", "bahrain", "saudi",
+        "australia", "suzuka", "japan", "brazil", "interlagos", "austin", "miami",
+        "las vegas", "canada", "austria", "hungary", "singapore", "baku", "mexico",
+        "zandvoort", "netherlands", "spain", "barcelona", "imola", "qatar"
+    ]
+    detected_race = next((r for r in known_races if r in msg_lower), None)
+
+    # 1. Intent: Head-to-Head Comparison
+    if len(detected_drivers) >= 2 or (("head to head" in msg_lower or "compare" in msg_lower or " vs " in msg_lower) and len(detected_drivers) >= 1):
+        d1 = detected_drivers[0].capitalize()
+        d2 = detected_drivers[1].capitalize() if len(detected_drivers) >= 2 else ("Verstappen" if d1 != "Verstappen" else "Hamilton")
+        try:
+            h2h = mcp_server.get_driver_head_to_head(d1, d2, season_year)
+            tool_called = "get_driver_head_to_head"
+            tool_args = {"driver1": d1, "driver2": d2, "season": season_year}
+            structured_data = h2h
+
+            d1_data = h2h["driver1"]
+            d2_data = h2h["driver2"]
+            scope = f"in {season_year}" if season_year else "across all shared career races"
+            reply = (
+                f"### ⚔️ Head-to-Head: {d1_data['name']} vs {d2_data['name']} ({scope})\n\n"
+                f"Over **{h2h['shared_races_count']} shared races**:\n"
+                f"- **Races Finished Ahead**: **{d1_data['name']}** ({h2h['head_to_head']['races_finished_ahead'].get(d1_data['name'], 0)}) vs "
+                f"**{d2_data['name']}** ({h2h['head_to_head']['races_finished_ahead'].get(d2_data['name'], 0)})\n"
+                f"- **Qualifying Ahead**: **{d1_data['name']}** ({h2h['head_to_head']['qualifying_ahead'].get(d1_data['name'], 0)}) vs "
+                f"**{d2_data['name']}** ({h2h['head_to_head']['qualifying_ahead'].get(d2_data['name'], 0)})\n"
+                f"- **Race Wins**: {d1_data['wins']} vs {d2_data['wins']}\n"
+                f"- **Podiums**: {d1_data['podiums']} vs {d2_data['podiums']}\n"
+                f"- **Pole Positions**: {d1_data['poles']} vs {d2_data['poles']}\n"
+                f"- **Points Scored**: {d1_data['points']:.0f} vs {d2_data['points']:.0f}\n"
+            )
+        except Exception as e:
+            reply = f"Could not calculate head-to-head comparison: {e}"
+
+    # 2. Intent: Specific Grand Prix Result
+    elif detected_race and season_year:
+        try:
+            race_res = mcp_server.get_race_results(season_year, detected_race)
+            tool_called = "get_race_results"
+            tool_args = {"season_year": season_year, "round_or_name": detected_race}
+            structured_data = race_res
+            top5 = race_res["results"][:5]
+            reply = (
+                f"### 🏁 Classification: {race_res['race_name']} ({race_res['year']})\n\n"
+                f"**Top 5 Finishers:**\n"
+            )
+            for r in top5:
+                if str(r.get('position')) == '1':
+                    reply += f"- 🥇 **P1**: {r['driver']} ({r['constructor']}) — {r['points']} pts\n"
+                else:
+                    reply += f"- **P{r['position']}**: {r['driver']} ({r['constructor']}) — {r['points']} pts\n"
+        except Exception as e:
+            reply = f"Could not retrieve Grand Prix classification: {e}"
+
+    # 3. Intent: Points Systems Listing
+    elif "points system" in msg_lower or "scoring system" in msg_lower or "points rules" in msg_lower:
+        try:
+            systems = mcp_server.list_points_systems()
+            tool_called = "list_points_systems"
+            structured_data = systems
+            reply = "### 📋 Historical Formula 1 Points Systems\n\n"
+            for s in systems:
+                pts_str = ", ".join(map(str, s["points"]))
+                reply += f"- **{s['name']}** (`{pts_str}`): {s['description']}\n"
+        except Exception as e:
+            reply = f"Could not retrieve points systems: {e}"
+
+    # 4. Intent: Recalculate Championship Standings / Season Result
+    elif season_year or "standings" in msg_lower or "champion" in msg_lower or "recalculate" in msg_lower:
+        target_year = season_year if season_year else 2021
+        pts_system = None
+        system_name = "Modern"
+        if "1991" in msg_lower or "classic" in msg_lower or "10-6-4" in msg_lower or "10, 6, 4" in msg_lower:
+            pts_system = [10, 6, 4, 3, 2, 1]
+            system_name = "Classic (1991-2002)"
+        elif "2003" in msg_lower or "eight" in msg_lower or "top 8" in msg_lower:
+            pts_system = [10, 8, 6, 5, 4, 3, 2, 1]
+            system_name = "Eight-scorer (2003-2009)"
+        elif "pre-1991" in msg_lower or "1961" in msg_lower or "9-6-4" in msg_lower:
+            pts_system = [9, 6, 4, 3, 2, 1]
+            system_name = "Pre-1991 (1961-1990)"
+        elif "1950" in msg_lower:
+            pts_system = [8, 6, 4, 3, 2]
+            system_name = "1950-1959"
+        else:
+            pts_system = [25, 18, 15, 12, 10, 8, 6, 4, 2, 1]
+            system_name = "Modern (2010+)"
+
+        try:
+            standings = mcp_server.calculate_championship_standings(target_year, points_system=pts_system, top_n=10)
+            tool_called = "calculate_championship_standings"
+            tool_args = {"season_year": target_year, "points_system": pts_system, "system_name": system_name}
+            structured_data = standings
+            if standings:
+                champ = standings[0]
+                p2 = standings[1] if len(standings) > 1 else None
+                margin = f"by {(champ['points'] - p2['points']):.1f} pts" if p2 else ""
+                reply = (
+                    f"### 🏆 {target_year} World Championship ({system_name})\n\n"
+                    f"**Champion**: **{champ['driver']}** ({champ['constructor']}) with **{champ['points']:.0f} pts** and {champ['wins']} wins {margin}.\n\n"
+                    f"| Pos | Driver | Team | Points | Wins |\n"
+                    f"| :--- | :--- | :--- | :--- | :--- |\n"
+                )
+                for s in standings[:5]:
+                    reply += f"| **P{s['position']}** | {s['driver']} | {s['constructor']} | {s['points']:.0f} | {s['wins']} |\n"
+            else:
+                reply = f"No results found for season {target_year}."
+        except Exception as e:
+            reply = f"Could not calculate championship standings for {target_year}: {e}"
+
+    else:
+        # Fallback query or guidance
+        reply = (
+            "I am the **F1 AI Strategist & Analytics Assistant**, powered by the FastMCP calculations engine.\n\n"
+            "Here are things I can calculate for you:\n"
+            "- **Championship Recalculation**: *'Who wins the 2008 championship with 2025 points?'* or *'Recalculate 1988 under modern rules'*\n"
+            "- **Driver Head-to-Head**: *'Compare Hamilton and Alonso in 2007'* or *'Senna vs Prost'*\n"
+            "- **Race Classification**: *'Show 2021 Abu Dhabi Grand Prix results'* or *'Monaco 2019'*\n"
+            "- **Scoring Eras**: *'List historical points systems'*"
+        )
+
+    # Enhance narrative commentary with Cloud LLM (Gemini 2.0 Flash / Vertex AI) or local Ollama
+    if os.getenv("ENABLE_CHAT_LLM", "true").lower() in ("true", "1") and tool_called:
+        try:
+            import cloud_llm
+            llm_prompt = (
+                f"You are an expert Formula 1 racing analyst. The user asked: '{msg}'.\n\n"
+                f"The points engine returned:\n{reply}\n\n"
+                f"Provide a concise, engaging 2-paragraph commentary highlighting the championship outcome and historical context. "
+                f"Keep the markdown table or bullet summary intact."
+            )
+            llm_res = cloud_llm.generate_ai_text(
+                prompt=llm_prompt,
+                system_instruction="You are an expert Formula 1 racing analyst.",
+                timeout=4.5
+            )
+            if llm_res.get("success") and llm_res.get("text"):
+                reply = llm_res["text"]
+        except Exception:
+            pass
+
+    suggestions = [
+        "🏆 Who wins 2008 with modern points?",
+        "⚔️ Compare Hamilton vs Alonso in 2007",
+        "🏁 Monaco 2021 classification",
+        "📊 Recalculate 1988 with 25-18-15 points",
+        "📋 List historical scoring systems",
+    ]
+
+    return {
+        "reply": reply,
+        "tool_called": tool_called,
+        "tool_args": tool_args,
+        "structured_data": structured_data,
+        "suggestions": suggestions
+    }
+
+
+@app.get("/api/llm/status")
+async def get_llm_status():
+    """Test LLM connectivity and report active Cloud / Local LLM provider status."""
+    import cloud_llm
+    return cloud_llm.test_llm_status()
 
 
 # Mount FastMCP Server (SSE transport for Cloud Run & remote AI assistants)

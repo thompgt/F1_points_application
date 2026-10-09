@@ -509,6 +509,7 @@ no `.env` and no database to catch import-time configuration breakage.
 | `GET` | `/metrics` | Prometheus exposition |
 | `GET` | `/api/docs`, `/api/redoc`, `/api/openapi.json` | API documentation |
 | `GET` / `POST` | `/mcp/sse`, `/mcp/messages/` | FastMCP Server-Sent Events (SSE) endpoints |
+| `POST` | `/api/chat` | In-browser AI assistant powered by FastMCP tools & Ollama |
 
 
 ```python

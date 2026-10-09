@@ -284,6 +284,25 @@ class PointsSystemsResponse(BaseModel):
     points_systems: dict
 
 
+class ChatMessage(BaseModel):
+    role: Literal["user", "assistant", "system"] = "user"
+    content: str = Field(..., max_length=2000)
+
+
+class ChatRequest(BaseModel):
+    """Request model for in-browser F1 AI chat assistant."""
+    message: str = Field(..., min_length=1, max_length=1000, description="User query for the F1 AI assistant")
+    history: Optional[List[ChatMessage]] = Field(default=None, description="Previous conversation turns")
+
+    @field_validator('message')
+    @classmethod
+    def sanitize_input(cls, v: str) -> str:
+        clean = sanitize_string(v, max_length=1000)
+        if not clean:
+            raise ValueError("Message cannot be empty after sanitization")
+        return clean
+
+
 # ============================================================================
 # Validation Helpers
 # ============================================================================

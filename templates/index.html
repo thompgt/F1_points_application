@@ -535,6 +535,273 @@
         .pos-up { background: rgba(40, 167, 69, 0.25); color: #4cd137; border: 1px solid #4cd137; }
         .pos-same { background: rgba(108, 117, 125, 0.2); color: #a4b0be; }
         .pos-down { background: rgba(220, 53, 69, 0.25); color: #ff6b81; border: 1px solid #ff6b81; }
+
+        /* ==========================================================================
+           Floating F1 AI Chatbot Drawer & Widget (FastMCP Powered)
+           ========================================================================== */
+        .f1-chat-fab {
+            position: fixed;
+            bottom: 28px;
+            right: 28px;
+            z-index: 1050;
+            background: linear-gradient(135deg, var(--f1-red), #ff2a2a);
+            color: #ffffff;
+            border: 2px solid rgba(255, 215, 0, 0.4);
+            border-radius: 50px;
+            padding: 12px 22px;
+            font-size: 1rem;
+            font-weight: 700;
+            box-shadow: 0 8px 25px rgba(225, 6, 0, 0.5), 0 0 15px rgba(255, 215, 0, 0.25);
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        }
+
+        .f1-chat-fab:hover {
+            transform: translateY(-4px) scale(1.03);
+            box-shadow: 0 12px 30px rgba(225, 6, 0, 0.7), 0 0 25px rgba(255, 215, 0, 0.4);
+            color: #ffffff;
+        }
+
+        .f1-chat-fab .fab-badge {
+            background: rgba(0, 0, 0, 0.35);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 0.75rem;
+            letter-spacing: 0.5px;
+        }
+
+        .f1-chat-drawer {
+            position: fixed;
+            bottom: 90px;
+            right: 28px;
+            width: 440px;
+            max-width: calc(100vw - 36px);
+            height: 620px;
+            max-height: calc(100vh - 120px);
+            z-index: 1060;
+            background: rgba(18, 18, 22, 0.96);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid rgba(225, 6, 0, 0.35);
+            border-radius: 20px;
+            box-shadow: 0 25px 60px rgba(0, 0, 0, 0.8), 0 0 30px rgba(225, 6, 0, 0.2);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            opacity: 0;
+            transform: translateY(20px) scale(0.96);
+            pointer-events: none;
+            transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        .f1-chat-drawer.open {
+            opacity: 1;
+            transform: translateY(0) scale(1);
+            pointer-events: auto;
+        }
+
+        .f1-chat-header {
+            background: linear-gradient(135deg, rgba(225, 6, 0, 0.9), rgba(160, 0, 0, 0.95));
+            padding: 14px 18px;
+            border-bottom: 1px solid rgba(255, 215, 0, 0.3);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .f1-chat-header h5 {
+            margin: 0;
+            font-size: 1.05rem;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .f1-chat-header .badge-mcp {
+            font-size: 0.7rem;
+            background: rgba(0, 0, 0, 0.4);
+            border: 1px solid rgba(255, 215, 0, 0.5);
+            color: var(--f1-gold);
+            padding: 2px 7px;
+            border-radius: 10px;
+            font-weight: 600;
+        }
+
+        .f1-chat-header-actions button {
+            background: transparent;
+            border: none;
+            color: rgba(255, 255, 255, 0.8);
+            font-size: 1rem;
+            cursor: pointer;
+            padding: 4px 8px;
+            transition: color 0.2s;
+        }
+
+        .f1-chat-header-actions button:hover {
+            color: #ffffff;
+        }
+
+        .f1-chat-messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+            font-size: 0.92rem;
+            background: radial-gradient(circle at 50% 0%, rgba(225, 6, 0, 0.05), transparent 70%);
+        }
+
+        .chat-bubble {
+            max-width: 88%;
+            padding: 10px 14px;
+            border-radius: 14px;
+            line-height: 1.45;
+            word-break: break-word;
+        }
+
+        .chat-bubble-user {
+            align-self: flex-end;
+            background: linear-gradient(135deg, #2b2b36, #1f1f28);
+            border: 1px solid rgba(225, 6, 0, 0.4);
+            color: #ffffff;
+            border-bottom-right-radius: 3px;
+        }
+
+        .chat-bubble-bot {
+            align-self: flex-start;
+            background: rgba(30, 30, 36, 0.9);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            color: #e5e7eb;
+            border-bottom-left-radius: 3px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+        }
+
+        .chat-bubble-bot h3 { font-size: 1.05rem; font-weight: 700; color: #ffffff; margin-top: 4px; margin-bottom: 8px; }
+        .chat-bubble-bot table {
+            width: 100%;
+            font-size: 0.82rem;
+            margin: 8px 0;
+            border-collapse: collapse;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        .chat-bubble-bot th, .chat-bubble-bot td {
+            padding: 5px 8px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+            color: #ffffff;
+        }
+        .chat-bubble-bot th { background: rgba(225, 6, 0, 0.25); color: #ffd700; font-weight: 600; }
+
+        .tool-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            font-size: 0.72rem;
+            background: rgba(0, 102, 204, 0.25);
+            border: 1px solid rgba(0, 102, 204, 0.5);
+            color: #70b5ff;
+            padding: 2px 8px;
+            border-radius: 12px;
+            margin-bottom: 6px;
+            font-family: monospace;
+        }
+
+        .quick-chips-container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            margin-top: 8px;
+        }
+
+        .quick-chip {
+            background: rgba(255, 255, 255, 0.06);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            color: #d1d5db;
+            font-size: 0.76rem;
+            padding: 4px 10px;
+            border-radius: 12px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .quick-chip:hover {
+            background: rgba(225, 6, 0, 0.3);
+            border-color: var(--f1-red);
+            color: #ffffff;
+        }
+
+        .f1-chat-footer {
+            padding: 12px;
+            background: rgba(22, 22, 28, 0.95);
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+
+        .f1-chat-input {
+            flex: 1;
+            background: rgba(35, 35, 42, 0.9);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            color: #ffffff;
+            border-radius: 25px;
+            padding: 8px 16px;
+            font-size: 0.88rem;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+
+        .f1-chat-input:focus {
+            border-color: var(--f1-red);
+            box-shadow: 0 0 8px rgba(225, 6, 0, 0.4);
+        }
+
+        .f1-chat-send-btn {
+            background: linear-gradient(135deg, var(--f1-red), #ff3333);
+            border: none;
+            color: #ffffff;
+            width: 38px;
+            height: 38px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+
+        .f1-chat-send-btn:hover {
+            transform: scale(1.08);
+        }
+
+        .f1-chat-send-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .typing-indicator span {
+            display: inline-block;
+            width: 6px;
+            height: 6px;
+            background: #e10600;
+            border-radius: 50%;
+            margin-right: 3px;
+            animation: typingBounce 1.2s infinite ease-in-out;
+        }
+        .typing-indicator span:nth-child(2) { animation-delay: 0.2s; }
+        .typing-indicator span:nth-child(3) { animation-delay: 0.4s; }
+
+        @keyframes typingBounce {
+            0%, 80%, 100% { transform: translateY(0); }
+            40% { transform: translateY(-6px); }
+        }
     </style>
 </head>
 <body>
@@ -2304,6 +2571,248 @@
                 }
             }
         }
+
+        // -------------------------------------------------------------------------
+        // In-Browser AI Chatbot Logic (FastMCP Integration)
+        // -------------------------------------------------------------------------
+        let f1ChatHistory = [];
+
+        function toggleF1Chat() {
+            const drawer = document.getElementById('f1ChatDrawer');
+            if (drawer) {
+                drawer.classList.toggle('open');
+                if (drawer.classList.contains('open')) {
+                    const input = document.getElementById('f1ChatInput');
+                    if (input) setTimeout(() => input.focus(), 200);
+                }
+            }
+        }
+
+        function clearF1Chat() {
+            f1ChatHistory = [];
+            const msgs = document.getElementById('f1ChatMessages');
+            if (msgs) {
+                msgs.innerHTML = `
+                    <div class="chat-bubble chat-bubble-bot">
+                        <strong>🏎️ Chat Cleared.</strong>
+                        <p class="mb-2 mt-1">Ready for your next F1 calculation question!</p>
+                        <div class="quick-chips-container">
+                            <button class="quick-chip" onclick="sendQuickPrompt('Who won the 2008 championship with modern points?')">🏆 2008 with modern points</button>
+                            <button class="quick-chip" onclick="sendQuickPrompt('Compare Hamilton vs Alonso in 2007')">⚔️ Hamilton vs Alonso 2007</button>
+                            <button class="quick-chip" onclick="sendQuickPrompt('Who won Monaco 2021?')">🏁 Monaco 2021</button>
+                        </div>
+                    </div>
+                `;
+            }
+        }
+
+        function sendQuickPrompt(promptText) {
+            const input = document.getElementById('f1ChatInput');
+            if (input) {
+                input.value = promptText;
+                submitF1Chat();
+            }
+        }
+
+        function handleF1ChatKey(e) {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                submitF1Chat();
+            }
+        }
+
+        async function submitF1Chat() {
+            const input = document.getElementById('f1ChatInput');
+            const sendBtn = document.getElementById('f1ChatSendBtn');
+            const msgs = document.getElementById('f1ChatMessages');
+            if (!input || !sendBtn || !msgs) return;
+
+            const message = input.value.trim();
+            if (!message) return;
+
+            // Render user bubble
+            const userBubble = document.createElement('div');
+            userBubble.className = 'chat-bubble chat-bubble-user';
+            userBubble.textContent = message;
+            msgs.appendChild(userBubble);
+            input.value = '';
+            msgs.scrollTop = msgs.scrollHeight;
+
+            // Add to history
+            f1ChatHistory.push({ role: 'user', content: message });
+
+            // Render typing indicator
+            const typingBubble = document.createElement('div');
+            typingBubble.className = 'chat-bubble chat-bubble-bot';
+            typingBubble.id = 'f1ChatTyping';
+            typingBubble.innerHTML = '<div class="typing-indicator"><span></span><span></span><span></span></div> <span class="text-muted small">Executing FastMCP tool...</span>';
+            msgs.appendChild(typingBubble);
+            msgs.scrollTop = msgs.scrollHeight;
+
+            sendBtn.disabled = true;
+
+            try {
+                const resp = await fetch('/api/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        message: message,
+                        history: f1ChatHistory
+                    })
+                });
+
+                const typingEl = document.getElementById('f1ChatTyping');
+                if (typingEl) typingEl.remove();
+
+                if (!resp.ok) {
+                    throw new Error(`HTTP ${resp.status}`);
+                }
+
+                const data = await resp.json();
+                const botBubble = document.createElement('div');
+                botBubble.className = 'chat-bubble chat-bubble-bot';
+
+                let toolPill = '';
+                if (data.tool_called) {
+                    toolPill = `<div class="tool-badge"><i class="fas fa-bolt text-warning"></i> FastMCP Tool: ${data.tool_called}</div>`;
+                }
+
+                let formattedReply = formatMarkdownSimple(data.reply);
+
+                let chipsHtml = '';
+                if (data.suggestions && data.suggestions.length > 0) {
+                    chipsHtml = '<div class="quick-chips-container mt-2">';
+                    data.suggestions.slice(0, 3).forEach(s => {
+                        const esc = s.replace(/'/g, "\\'");
+                        chipsHtml += `<button class="quick-chip" onclick="sendQuickPrompt('${esc}')">${s}</button>`;
+                    });
+                    chipsHtml += '</div>';
+                }
+
+                botBubble.innerHTML = `${toolPill}<div>${formattedReply}</div>${chipsHtml}`;
+                msgs.appendChild(botBubble);
+                f1ChatHistory.push({ role: 'assistant', content: data.reply });
+            } catch (err) {
+                const typingEl = document.getElementById('f1ChatTyping');
+                if (typingEl) typingEl.remove();
+
+                const errBubble = document.createElement('div');
+                errBubble.className = 'chat-bubble chat-bubble-bot text-danger';
+                errBubble.innerHTML = `<i class="fas fa-exclamation-triangle me-1"></i> Error querying AI engine: ${err.message}`;
+                msgs.appendChild(errBubble);
+            } finally {
+                sendBtn.disabled = false;
+                msgs.scrollTop = msgs.scrollHeight;
+            }
+        }
+
+        function escapeHtml(str) {
+            return String(str)
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;")
+                .replace(/'/g, "&#039;");
+        }
+
+        function formatMarkdownSimple(text) {
+            if (!text) return '';
+            const safeText = escapeHtml(text);
+            const lines = safeText.split('\n');
+            let inTable = false;
+            let htmlLines = [];
+            let tableLines = [];
+
+            for (let i = 0; i < lines.length; i++) {
+                const line = lines[i].trim();
+                if (line.startsWith('|') && line.endsWith('|')) {
+                    inTable = true;
+                    tableLines.push(line);
+                } else {
+                    if (inTable) {
+                        htmlLines.push(convertTableToHtml(tableLines));
+                        tableLines = [];
+                        inTable = false;
+                    }
+                    htmlLines.push(line);
+                }
+            }
+            if (inTable) {
+                htmlLines.push(convertTableToHtml(tableLines));
+            }
+
+            let out = htmlLines.join('\n');
+            out = out.replace(/^### (.*$)/gim, '<h3>$1</h3>');
+            out = out.replace(/^## (.*$)/gim, '<h4>$1</h4>');
+            out = out.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+            out = out.replace(/^- (.*$)/gim, '<li>$1</li>');
+            out = out.replace(/(<li>.*<\/li>)/s, '<ul class="ps-3 my-1">$1</ul>');
+            out = out.replace(/\n\n/g, '<br><br>');
+            return out;
+        }
+
+        function convertTableToHtml(lines) {
+            if (lines.length < 2) return '';
+            let html = '<div class="table-responsive"><table class="table table-sm table-dark table-striped my-2">';
+            const headers = lines[0].split('|').map(s => s.trim()).filter(s => s.length > 0);
+            html += '<thead><tr>' + headers.map(h => `<th>${h}</th>`).join('') + '</tr></thead><tbody>';
+            for (let r = 2; r < lines.length; r++) {
+                const cols = lines[r].split('|').map(s => s.trim()).filter(s => s.length > 0);
+                if (cols.length > 0) {
+                    html += '<tr>' + cols.map(c => `<td>${c}</td>`).join('') + '</tr>';
+                }
+            }
+            html += '</tbody></table></div>';
+            return html;
+        }
     </script>
+
+    <!-- =====================================================================
+         In-Browser F1 AI Chatbot Drawer & Widget (FastMCP Powered)
+         ===================================================================== -->
+    <!-- Trigger Floating Button -->
+    <button class="f1-chat-fab" id="f1ChatFab" onclick="toggleF1Chat()" title="Ask the F1 AI Strategist">
+        <i class="fas fa-robot"></i>
+        <span>AI Strategist</span>
+        <span class="fab-badge">MCP</span>
+    </button>
+
+    <!-- Floating Chat Drawer -->
+    <div class="f1-chat-drawer" id="f1ChatDrawer">
+        <!-- Header -->
+        <div class="f1-chat-header">
+            <h5>
+                <i class="fas fa-microchip text-warning"></i>
+                F1 AI Strategist
+                <span class="badge-mcp">FastMCP Engine</span>
+            </h5>
+            <div class="f1-chat-header-actions">
+                <button onclick="clearF1Chat()" title="Clear Chat History"><i class="fas fa-trash-alt"></i></button>
+                <button onclick="toggleF1Chat()" title="Close"><i class="fas fa-times"></i></button>
+            </div>
+        </div>
+
+        <!-- Messages Stream -->
+        <div class="f1-chat-messages" id="f1ChatMessages">
+            <div class="chat-bubble chat-bubble-bot">
+                <strong>🏎️ Welcome to the F1 AI Strategist!</strong>
+                <p class="mb-2 mt-1">I am powered by the backend <strong>FastMCP</strong> analytics engine. Ask me to recalculate historical championships, evaluate driver head-to-heads, or inspect race results.</p>
+                <div class="quick-chips-container">
+                    <button class="quick-chip" onclick="sendQuickPrompt('Who won the 2008 championship with modern points?')">🏆 2008 with modern points</button>
+                    <button class="quick-chip" onclick="sendQuickPrompt('Compare Hamilton vs Alonso in 2007')">⚔️ Hamilton vs Alonso 2007</button>
+                    <button class="quick-chip" onclick="sendQuickPrompt('Who won Monaco 2021?')">🏁 Monaco 2021 result</button>
+                    <button class="quick-chip" onclick="sendQuickPrompt('What if 1988 used 25-18-15 points?')">📊 1988 under modern rules</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Footer / Input -->
+        <div class="f1-chat-footer">
+            <input type="text" class="f1-chat-input" id="f1ChatInput" placeholder="Ask about championships, drivers, or rules..." onkeydown="handleF1ChatKey(event)">
+            <button class="f1-chat-send-btn" id="f1ChatSendBtn" onclick="submitF1Chat()" title="Send">
+                <i class="fas fa-paper-plane"></i>
+            </button>
+        </div>
+    </div>
 </body>
-</html>
+</html>

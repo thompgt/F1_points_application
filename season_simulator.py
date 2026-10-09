@@ -21,6 +21,7 @@ from datetime import datetime
 import json
 
 from metrics import ollama_calls_total, ollama_request_duration_seconds
+import cloud_llm
 
 # Initialize ChromaDB client
 chroma_client = chromadb.Client()
@@ -234,26 +235,18 @@ Write in an engaging, informative style suitable for a professional report."""
             # and making it dynamic later would be a cardinality footgun.
             started = time.perf_counter()
             try:
-                response = requests.post(
-                    f"{self.ollama_base_url}/api/generate",
-                    json={
-                        "model": self.ollama_model,
-                        "prompt": prompt,
-                        "stream": False
-                    },
-                    timeout=180
+                # Calls Cloud LLM (Gemini 2.0 Flash / Vertex AI / OpenAI) or falls back to local Ollama
+                llm_res = cloud_llm.generate_ai_text(
+                    prompt=prompt,
+                    system_instruction="You are an expert Formula 1 racing analyst and historian.",
+                    timeout=120.0
                 )
-                if response.status_code != 200:
+                if llm_res["success"] and llm_res["text"]:
+                    ollama_calls_total.labels(outcome="success").inc()
+                    return llm_res["text"]
+                else:
                     ollama_calls_total.labels(outcome="http_error").inc()
-                    raise RuntimeError(f"Ollama returned status {response.status_code}: {response.text[:300]}")
-
-                data = response.json()
-                text = data.get('response', '').strip()
-                if not text:
-                    ollama_calls_total.labels(outcome="empty_response").inc()
-                    raise RuntimeError("Ollama returned empty response")
-                ollama_calls_total.labels(outcome="success").inc()
-                return text
+                    raise RuntimeError(llm_res.get("error") or "LLM generation returned empty response")
             except RuntimeError:
                 raise
             except Exception:
